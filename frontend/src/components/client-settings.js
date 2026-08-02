@@ -17,14 +17,23 @@ export default function ClientSettings({ config }) {
    const [emailRecipient, setEmailRecipient] = useState(config[CONFIG_KEYS.emailRecipient] ?? '')
    const [state, formAction, isPending] = useActionState(updateConfig, {})
    const [showSaved, setShowSaved] = useState(false)
+   const [lastResult, setLastResult] = useState(state)
+
+   // Adjust during render rather than in an effect: the confirmation is derived
+   // from the action result, so reacting to it in an effect would render once
+   // without the message and then immediately again with it.
+   if (state !== lastResult) {
+      setLastResult(state)
+      setShowSaved(Boolean(state.success))
+   }
 
    useEffect(() => {
-      if (state.success) {
-         setShowSaved(true)
-         const timer = setTimeout(() => setShowSaved(false), 2000)
-         return () => clearTimeout(timer)
+      if (!showSaved) {
+         return
       }
-   }, [state])
+      const timer = setTimeout(() => setShowSaved(false), 2000)
+      return () => clearTimeout(timer)
+   }, [showSaved])
 
    return (
       <Card>
