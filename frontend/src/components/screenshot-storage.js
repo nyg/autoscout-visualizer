@@ -107,9 +107,16 @@ function CleanupSection() {
 
    if (state?.success) {
       return (
-         <p className="text-sm text-green-600">
-            Deleted {state.deletedCount} screenshot{state.deletedCount !== 1 ? 's' : ''}.
-         </p>
+         <div className="flex flex-col gap-1">
+            <p className="text-sm text-green-600">
+               Deleted {state.deletedCount} screenshot{state.deletedCount !== 1 ? 's' : ''}.
+            </p>
+            {state.warning && (
+               <p className="text-sm text-destructive">
+                  {state.warning} They are orphaned in storage and must be removed manually.
+               </p>
+            )}
+         </div>
       )
    }
 

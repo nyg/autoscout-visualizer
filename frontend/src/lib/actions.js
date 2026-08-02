@@ -7,6 +7,17 @@ import { deleteR2Objects } from '@/lib/r2'
 
 const pgSql = postgres(process.env.PGSQL_URL, { prepare: false })
 
+// The DB rows are already committed when R2 deletion runs, so leftovers are
+// orphaned files rather than a failed operation. Report them instead of
+// claiming a clean success.
+function r2Warning({ orphanedCount, reason }) {
+   if (orphanedCount === 0) {
+      return null
+   }
+   const files = `${orphanedCount} file${orphanedCount !== 1 ? 's' : ''}`
+   return `${files} could not be removed from storage${reason ? `: ${reason}` : '.'}`
+}
+
 
 export async function createSearch(prevState, formData) {
    const name = formData.get('name')?.toString().trim()
@@ -130,9 +141,9 @@ export async function deleteSearch(prevState, formData) {
          await pgSql`delete from searches where id = ${id}`
       })
 
-      await deleteR2Objects(r2Keys)
+      const r2Result = await deleteR2Objects(r2Keys)
       revalidatePath('/', 'layout')
-      return { success: true }
+      return { success: true, warning: r2Warning(r2Result) }
    } catch {
       return { error: 'Failed to delete search.' }
    }
@@ -232,9 +243,9 @@ export async function deleteSearchRun(prevState, formData) {
          await pgSql`delete from search_runs where id = ${id}`
       })
 
-      await deleteR2Objects(r2Keys)
+      const r2Result = await deleteR2Objects(r2Keys)
       revalidatePath('/search-runs')
-      return { success: true }
+      return { success: true, warning: r2Warning(r2Result) }
    } catch {
       return { error: 'Failed to delete search run.' }
    }
@@ -301,12 +312,13 @@ export async function deleteOldScreenshots(prevState, formData) {
       const ids = rows.map(r => r.id)
       const r2Keys = rows.map(r => r.r2_key).filter(Boolean)
 
+      let r2Result = { requestedCount: 0, orphanedCount: 0, reason: null }
       if (ids.length > 0) {
          await pgSql.begin(async pgSql => {
             await pgSql`update cars set screenshot_id = null where screenshot_id in ${pgSql(ids)}`
             await pgSql`delete from screenshots where id in ${pgSql(ids)}`
          })
-         await deleteR2Objects(r2Keys)
+         r2Result = await deleteR2Objects(r2Keys)
       }
 
       revalidatePath('/settings')
@@ -314,6 +326,7 @@ export async function deleteOldScreenshots(prevState, formData) {
          success: true,
          deletedCount: ids.length,
          freedBytes: 0, // already deleted, can't sum
+         warning: r2Warning(r2Result),
       }
    } catch {
       return { error: 'Failed to delete old screenshots.' }
