@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@aws-sdk/client-s3':
-        specifier: 3.1097.0
-        version: 3.1097.0
+        specifier: 3.1098.0
+        version: 3.1098.0
       '@base-ui/react':
         specifier: 1.6.0
         version: 1.6.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -83,8 +83,8 @@ packages:
     resolution: {integrity: sha512-Hv4VX5+IdDYmAbOdiwZguz8fLh3WnE4VtyJwVNEHLulA+OYy7Z5L0ETGUlX2T4g8DLO8XxCV8CyWrtVL4uwqkg==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-s3@3.1097.0':
-    resolution: {integrity: sha512-iCBD95hrynpxiOzD301pUW9H3mxKcEfMErLqdg58WcIZnEqJuOd7JwcARsV3/y6OWj1t6j2tpS9lGt6X4OnPFw==}
+  '@aws-sdk/client-s3@3.1098.0':
+    resolution: {integrity: sha512-6Z53QG2jdujsCt3eHO2cjCpdfvz2Pgs+hP/NINuGONZUJmdrHLLDvWM9F114Yq0NPIGtk+yA/GCjG3XiUhw+gA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.977.3':
@@ -1172,8 +1172,8 @@ packages:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
     engines: {node: 18 || 20 || >=22}
 
-  baseline-browser-mapping@2.11.8:
-    resolution: {integrity: sha512-zAgkquC2WYF0PIc6XbNYkA2uuxxFavzgmX61R+dHDUa558V8Ejf8ozTZFR6QzM24RWu4kBcRkhJ5kpz77j9fnQ==}
+  baseline-browser-mapping@2.11.9:
+    resolution: {integrity: sha512-cp447VUsGS07+n1Dqf7YSQ8maeJrjEhaDxTm1ZefbqDtypHBC5GzGMQbklR6IPR13Y8OAJRHZWEMtZipJLCttg==}
     engines: {node: '>=6.0.0'}
     hasBin: true
 
@@ -3167,7 +3167,7 @@ snapshots:
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
-  '@aws-sdk/client-s3@3.1097.0':
+  '@aws-sdk/client-s3@3.1098.0':
     dependencies:
       '@aws-sdk/checksums': 3.1000.23
       '@aws-sdk/core': 3.977.3
@@ -4321,7 +4321,7 @@ snapshots:
 
   balanced-match@4.0.4: {}
 
-  baseline-browser-mapping@2.11.8: {}
+  baseline-browser-mapping@2.11.9: {}
 
   body-parser@2.3.0(supports-color@7.2.0):
     dependencies:
@@ -4354,7 +4354,7 @@ snapshots:
 
   browserslist@4.28.4:
     dependencies:
-      baseline-browser-mapping: 2.11.8
+      baseline-browser-mapping: 2.11.9
       caniuse-lite: 1.0.30001800
       electron-to-chromium: 1.5.384
       node-releases: 2.0.50
@@ -5636,7 +5636,7 @@ snapshots:
     dependencies:
       '@next/env': 16.2.12
       '@swc/helpers': 0.5.15
-      baseline-browser-mapping: 2.11.8
+      baseline-browser-mapping: 2.11.9
       caniuse-lite: 1.0.30001800
       postcss: 8.4.31
       react: 19.2.8
