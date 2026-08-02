@@ -306,25 +306,24 @@ export async function deleteOldScreenshots(prevState, formData) {
          }
       }
 
-      // Collect R2 keys before deletion
-      const rows = await pgSql`
-         select id, r2_key from screenshots where created_at < ${cutoff}`
-      const ids = rows.map(r => r.id)
-      const r2Keys = rows.map(r => r.r2_key).filter(Boolean)
+      // Match on the cutoff in both statements rather than round-tripping the
+      // ids: a retention sweep covers tens of thousands of rows, and passing
+      // them back as an `in (...)` list makes the query text enormous.
+      const deleted = await pgSql.begin(async pgSql => {
+         await pgSql`
+            update cars set screenshot_id = null
+             where screenshot_id in (select id from screenshots where created_at < ${cutoff})`
+         return await pgSql`
+            delete from screenshots where created_at < ${cutoff} returning r2_key`
+      })
 
-      let r2Result = { requestedCount: 0, orphanedCount: 0, reason: null }
-      if (ids.length > 0) {
-         await pgSql.begin(async pgSql => {
-            await pgSql`update cars set screenshot_id = null where screenshot_id in ${pgSql(ids)}`
-            await pgSql`delete from screenshots where id in ${pgSql(ids)}`
-         })
-         r2Result = await deleteR2Objects(r2Keys)
-      }
+      const r2Keys = deleted.map(r => r.r2_key).filter(Boolean)
+      const r2Result = await deleteR2Objects(r2Keys)
 
       revalidatePath('/settings')
       return {
          success: true,
-         deletedCount: ids.length,
+         deletedCount: deleted.length,
          freedBytes: 0, // already deleted, can't sum
          warning: r2Warning(r2Result),
       }

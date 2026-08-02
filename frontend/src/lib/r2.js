@@ -2,6 +2,8 @@ import 'server-only'
 
 import { DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3'
 
+const MAX_CONCURRENT_BATCHES = 4
+
 let s3Client = null
 
 function getS3Client() {
@@ -45,27 +47,42 @@ export async function deleteR2Objects(keys) {
       return { requestedCount, orphanedCount: requestedCount, reason: 'R2 is not configured' }
    }
 
-   let orphanedCount = 0
-   let reason = null
-
    // S3 DeleteObjects supports up to 1000 keys per request
+   const batches = []
    for (let i = 0; i < keys.length; i += 1000) {
-      const batch = keys.slice(i, i + 1000)
+      batches.push(keys.slice(i, i + 1000))
+   }
+
+   const deleteBatch = async (batch, batchNumber) => {
       try {
          const response = await client.send(new DeleteObjectsCommand({
             Bucket: bucket,
             Delete: { Objects: batch.map(Key => ({ Key })) },
          }))
          if (response.Errors?.length > 0) {
-            orphanedCount += response.Errors.length
-            reason ??= response.Errors[0].Code || 'R2 rejected the deletion'
-            console.error(`Partial R2 deletion failure (batch ${i / 1000 + 1}):`,
+            console.error(`Partial R2 deletion failure (batch ${batchNumber}):`,
                response.Errors.map(e => ({ key: e.Key, code: e.Code, message: e.Message })))
+            return { orphaned: response.Errors.length, reason: response.Errors[0].Code || 'R2 rejected the deletion' }
          }
+         return { orphaned: 0, reason: null }
       } catch (err) {
-         orphanedCount += batch.length
-         reason ??= err.message
-         console.error(`Failed to delete R2 objects (batch ${i / 1000 + 1}):`, err.message)
+         console.error(`Failed to delete R2 objects (batch ${batchNumber}):`, err.message)
+         return { orphaned: batch.length, reason: err.message }
+      }
+   }
+
+   // A retention sweep is a dozen-plus batches; running them one at a time adds
+   // a round trip each. Bounded concurrency keeps that off the request latency
+   // without opening an unbounded number of connections.
+   let orphanedCount = 0
+   let reason = null
+   for (let i = 0; i < batches.length; i += MAX_CONCURRENT_BATCHES) {
+      const results = await Promise.all(
+         batches.slice(i, i + MAX_CONCURRENT_BATCHES).map((batch, j) => deleteBatch(batch, i + j + 1))
+      )
+      for (const result of results) {
+         orphanedCount += result.orphaned
+         reason ??= result.reason
       }
    }
 
