@@ -104,6 +104,7 @@ function DeleteRunCell({ runId }) {
    const [info, setInfo] = useState(null)
    const [isPending, startTransition] = useTransition()
    const [error, setError] = useState(null)
+   const [warning, setWarning] = useState(null)
 
    const handleDelete = () => {
       setError(null)
@@ -129,7 +130,13 @@ function DeleteRunCell({ runId }) {
          if (result?.error) {
             setError(result.error)
          }
-         setDialogOpen(false)
+         // The row disappears on success, so an R2 warning has to be shown in
+         // the dialog — keep it open rather than losing the message.
+         if (result?.warning) {
+            setWarning(result.warning)
+         } else {
+            setDialogOpen(false)
+         }
       })
    }
 
@@ -149,18 +156,30 @@ function DeleteRunCell({ runId }) {
          <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <AlertDialogContent size="sm">
                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete search run?</AlertDialogTitle>
+                  <AlertDialogTitle>{warning ? 'Deleted, with a problem' : 'Delete search run?'}</AlertDialogTitle>
                   <AlertDialogDescription>
-                     This will permanently delete {info?.carCount} car{info?.carCount !== 1 ? 's' : ''}
-                     {info?.screenshotCount > 0 && ` and ${info?.screenshotCount} screenshot${info?.screenshotCount !== 1 ? 's' : ''}`}.
-                     This action cannot be undone.
+                     {warning ? (
+                        `The database entries were deleted, but ${warning}`
+                     ) : (
+                        <>
+                           This will permanently delete {info?.carCount} car{info?.carCount !== 1 ? 's' : ''}
+                           {info?.screenshotCount > 0 && ` and ${info?.screenshotCount} screenshot${info?.screenshotCount !== 1 ? 's' : ''}`}.
+                           This action cannot be undone.
+                        </>
+                     )}
                   </AlertDialogDescription>
                </AlertDialogHeader>
                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
-                  <AlertDialogAction variant="destructive" disabled={isPending} onClick={handleConfirm}>
-                     {isPending ? 'Deleting…' : 'Delete'}
-                  </AlertDialogAction>
+                  {warning ? (
+                     <AlertDialogCancel onClick={() => setWarning(null)}>Close</AlertDialogCancel>
+                  ) : (
+                     <>
+                        <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction variant="destructive" disabled={isPending} onClick={handleConfirm}>
+                           {isPending ? 'Deleting…' : 'Delete'}
+                        </AlertDialogAction>
+                     </>
+                  )}
                </AlertDialogFooter>
             </AlertDialogContent>
          </AlertDialog>

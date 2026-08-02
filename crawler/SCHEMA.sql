@@ -174,6 +174,12 @@ ALTER TABLE ONLY public.cars
     ADD CONSTRAINT cars_screenshot_id_fkey FOREIGN KEY (screenshot_id) REFERENCES public.screenshots(id);
 
 
+-- Referencing side of cars_screenshot_id_fkey. Postgres does not index this
+-- automatically, and without it every deleted screenshot row costs a full scan
+-- of cars to enforce the constraint (bulk retention cleanup goes quadratic).
+CREATE INDEX idx_cars_screenshot_id ON public.cars (screenshot_id);
+
+
 CREATE TABLE public.config (
     key text NOT NULL,
     value text NOT NULL DEFAULT ''
@@ -228,6 +234,12 @@ ALTER TABLE ONLY public.car_photos
 
 
 CREATE INDEX idx_car_photos_car_id ON public.car_photos (car_id);
+
+
+-- Referencing side of car_photos_photo_id_fkey. The (car_id, photo_id) primary
+-- key cannot seek on photo_id alone, so without this every deleted photo row
+-- costs a full scan of car_photos to enforce the constraint.
+CREATE INDEX idx_car_photos_photo_id ON public.car_photos (photo_id);
 
 
 ALTER TABLE ONLY public.car_photos

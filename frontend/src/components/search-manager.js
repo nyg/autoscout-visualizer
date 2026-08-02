@@ -67,6 +67,7 @@ function SearchRow({ search }) {
    const [deleteInfo, setDeleteInfo] = useState(null)
    const [deletePending, startDeleteTransition] = useTransition()
    const [deleteError, setDeleteError] = useState(null)
+   const [deleteWarning, setDeleteWarning] = useState(null)
 
    const handleDelete = () => {
       setDeleteError(null)
@@ -92,7 +93,13 @@ function SearchRow({ search }) {
          if (result?.error) {
             setDeleteError(result.error)
          }
-         setDialogOpen(false)
+         // The row disappears on success, so an R2 warning has to be shown in
+         // the dialog — keep it open rather than losing the message.
+         if (result?.warning) {
+            setDeleteWarning(result.warning)
+         } else {
+            setDialogOpen(false)
+         }
       })
    }
 
@@ -242,20 +249,34 @@ function SearchRow({ search }) {
                <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
                   <AlertDialogContent size="sm">
                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete &ldquo;{search.name}&rdquo;?</AlertDialogTitle>
+                        <AlertDialogTitle>
+                           {deleteWarning ? 'Deleted, with a problem' : <>Delete &ldquo;{search.name}&rdquo;?</>}
+                        </AlertDialogTitle>
                         <AlertDialogDescription>
-                           This will permanently delete {deleteInfo?.runCount} run{deleteInfo?.runCount !== 1 ? 's' : ''},
-                           {' '}{deleteInfo?.carCount} car{deleteInfo?.carCount !== 1 ? 's' : ''}
-                           {deleteInfo?.screenshotCount > 0 && `, ${deleteInfo?.screenshotCount} screenshot${deleteInfo?.screenshotCount !== 1 ? 's' : ''}`}
-                           {deleteInfo?.photoCount > 0 && `, ${deleteInfo?.photoCount} photo${deleteInfo?.photoCount !== 1 ? 's' : ''}`}.
-                           This action cannot be undone.
+                           {deleteWarning ? (
+                              `The database entries were deleted, but ${deleteWarning}`
+                           ) : (
+                              <>
+                                 This will permanently delete {deleteInfo?.runCount} run{deleteInfo?.runCount !== 1 ? 's' : ''},
+                                 {' '}{deleteInfo?.carCount} car{deleteInfo?.carCount !== 1 ? 's' : ''}
+                                 {deleteInfo?.screenshotCount > 0 && `, ${deleteInfo?.screenshotCount} screenshot${deleteInfo?.screenshotCount !== 1 ? 's' : ''}`}
+                                 {deleteInfo?.photoCount > 0 && `, ${deleteInfo?.photoCount} photo${deleteInfo?.photoCount !== 1 ? 's' : ''}`}.
+                                 This action cannot be undone.
+                              </>
+                           )}
                         </AlertDialogDescription>
                      </AlertDialogHeader>
                      <AlertDialogFooter>
-                        <AlertDialogCancel disabled={deletePending}>Cancel</AlertDialogCancel>
-                        <AlertDialogAction variant="destructive" disabled={deletePending} onClick={handleConfirmDelete}>
-                           {deletePending ? 'Deleting…' : 'Delete'}
-                        </AlertDialogAction>
+                        {deleteWarning ? (
+                           <AlertDialogCancel onClick={() => setDeleteWarning(null)}>Close</AlertDialogCancel>
+                        ) : (
+                           <>
+                              <AlertDialogCancel disabled={deletePending}>Cancel</AlertDialogCancel>
+                              <AlertDialogAction variant="destructive" disabled={deletePending} onClick={handleConfirmDelete}>
+                                 {deletePending ? 'Deleting…' : 'Delete'}
+                              </AlertDialogAction>
+                           </>
+                        )}
                      </AlertDialogFooter>
                   </AlertDialogContent>
                </AlertDialog>

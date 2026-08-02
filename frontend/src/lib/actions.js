@@ -7,6 +7,17 @@ import { deleteR2Objects } from '@/lib/r2'
 
 const pgSql = postgres(process.env.PGSQL_URL, { prepare: false })
 
+// The DB rows are already committed when R2 deletion runs, so leftovers are
+// orphaned files rather than a failed operation. Report them instead of
+// claiming a clean success.
+function r2Warning({ orphanedCount, reason }) {
+   if (orphanedCount === 0) {
+      return null
+   }
+   const files = `${orphanedCount} file${orphanedCount !== 1 ? 's' : ''}`
+   return `${files} could not be removed from storage${reason ? `: ${reason}` : '.'}`
+}
+
 
 export async function createSearch(prevState, formData) {
    const name = formData.get('name')?.toString().trim()
@@ -130,9 +141,9 @@ export async function deleteSearch(prevState, formData) {
          await pgSql`delete from searches where id = ${id}`
       })
 
-      await deleteR2Objects(r2Keys)
+      const r2Result = await deleteR2Objects(r2Keys)
       revalidatePath('/', 'layout')
-      return { success: true }
+      return { success: true, warning: r2Warning(r2Result) }
    } catch {
       return { error: 'Failed to delete search.' }
    }
@@ -232,9 +243,9 @@ export async function deleteSearchRun(prevState, formData) {
          await pgSql`delete from search_runs where id = ${id}`
       })
 
-      await deleteR2Objects(r2Keys)
+      const r2Result = await deleteR2Objects(r2Keys)
       revalidatePath('/search-runs')
-      return { success: true }
+      return { success: true, warning: r2Warning(r2Result) }
    } catch {
       return { error: 'Failed to delete search run.' }
    }
@@ -295,25 +306,26 @@ export async function deleteOldScreenshots(prevState, formData) {
          }
       }
 
-      // Collect R2 keys before deletion
-      const rows = await pgSql`
-         select id, r2_key from screenshots where created_at < ${cutoff}`
-      const ids = rows.map(r => r.id)
-      const r2Keys = rows.map(r => r.r2_key).filter(Boolean)
+      // Match on the cutoff in both statements rather than round-tripping the
+      // ids: a retention sweep covers tens of thousands of rows, and passing
+      // them back as an `in (...)` list makes the query text enormous.
+      const deleted = await pgSql.begin(async pgSql => {
+         await pgSql`
+            update cars set screenshot_id = null
+             where screenshot_id in (select id from screenshots where created_at < ${cutoff})`
+         return await pgSql`
+            delete from screenshots where created_at < ${cutoff} returning r2_key`
+      })
 
-      if (ids.length > 0) {
-         await pgSql.begin(async pgSql => {
-            await pgSql`update cars set screenshot_id = null where screenshot_id in ${pgSql(ids)}`
-            await pgSql`delete from screenshots where id in ${pgSql(ids)}`
-         })
-         await deleteR2Objects(r2Keys)
-      }
+      const r2Keys = deleted.map(r => r.r2_key).filter(Boolean)
+      const r2Result = await deleteR2Objects(r2Keys)
 
       revalidatePath('/settings')
       return {
          success: true,
-         deletedCount: ids.length,
+         deletedCount: deleted.length,
          freedBytes: 0, // already deleted, can't sum
+         warning: r2Warning(r2Result),
       }
    } catch {
       return { error: 'Failed to delete old screenshots.' }
