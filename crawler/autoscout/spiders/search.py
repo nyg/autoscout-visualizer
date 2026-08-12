@@ -9,7 +9,10 @@ from scrapy.spidermiddlewares.httperror import HttpError
 from scrapy_seleniumbase_cdp import SeleniumBaseRequest
 from twisted.python.failure import Failure
 
+from ..flight_data_patch import tolerate_empty_flight_data_rows
 from ..items import CarItem, SellerItem
+
+tolerate_empty_flight_data_rows()
 
 ACCEPT_COOKIES_AND_EXPAND_FIELDS = {
     'await_promise': True,
