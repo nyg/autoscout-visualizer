@@ -138,7 +138,7 @@ class ScreenshotPipeline:
 class PhotoPipeline:
     """Downloads listing photos, compresses to WebP, deduplicates via MD5, and uploads to R2."""
 
-    PHOTO_BASE_URL = 'https://listing-images.autoscout24.ch/listing/'
+    PHOTO_BASE_URL = 'https://listing-images.autoscout24.ch/'
 
     def __init__(self, crawler: Crawler) -> None:
         self.crawler = crawler
