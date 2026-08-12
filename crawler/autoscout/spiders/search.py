@@ -69,7 +69,7 @@ class SearchSpider(Spider):
         try:
             page_index, page_count, total_car_count, listings = self._extract_search_results(response)
         except Exception as e:
-            self.failed_requests.append({'url': response.url, 'reason': f'search page parsing failed: {e!r}'})
+            self.failed_requests.append({'url': self._requested_url(response), 'reason': f'search page parsing failed: {e!r}'})
             raise
 
         self.logger.info(f'Parsing search page: {page_index + 1}/{page_count} {response.url}')
@@ -93,7 +93,7 @@ class SearchSpider(Spider):
             yield CarItem.from_listing(self.search_id, response.url, response.meta.get('screenshot'), listing_data)
         except Exception as e:
             self.logger.error(f'Error parsing car: {e}')
-            self.failed_requests.append({'url': response.url, 'reason': f'car page parsing failed: {e!r}'})
+            self.failed_requests.append({'url': self._requested_url(response), 'reason': f'car page parsing failed: {e!r}'})
 
     @staticmethod
     def _extract_search_results(response: Response) -> tuple[int, int, int, list[dict[str, Any]]]:
@@ -166,6 +166,10 @@ class SearchSpider(Spider):
                         return result, parent
 
         return None, None
+
+    @staticmethod
+    def _requested_url(response: Response) -> str:
+        return response.request.url if response.request else response.url
 
     def _listing_url(self, listing: dict[str, Any]) -> str:
         return f'{self.url.scheme}://{self.url.netloc}/en/d/{listing['id']}'
