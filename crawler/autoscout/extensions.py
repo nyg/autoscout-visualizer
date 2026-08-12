@@ -53,7 +53,9 @@ class SearchRunExtension:
             failed_request_count = len(self.crawler.spider.failed_requests)
             request_count = stats.get('response_received_count', 0)
             finish_reason = stats.get('finish_reason', 'unknown')
-            success = cars_found == cars_scraped
+            spider_exception_count = stats.get('spider_exceptions/count', 0)
+            success = cars_found == cars_scraped and not failed_request_count and not spider_exception_count
+            self.crawler.stats.set_value('run_success', success)
 
             with self.connection.transaction():
                 with self.connection.cursor() as cursor:

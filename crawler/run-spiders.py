@@ -117,13 +117,16 @@ def main() -> None:
     # We start it manually below and stop it once all crawlers have finished.
     runner = CrawlerRunner(settings)
     batch_started_at = datetime.now(timezone.utc)
+    crawlers = []
 
     @defer.inlineCallbacks
     def crawl_all():
         try:
             for search_id, search_name, url, screenshots_enabled, photos_enabled in searches:
                 log.info('Running spider for search: %s (id=%d)', search_name, search_id)
-                yield runner.crawl(SearchSpider, search_id=search_id, search_name=search_name, url=url,
+                crawler = runner.create_crawler(SearchSpider)
+                crawlers.append(crawler)
+                yield runner.crawl(crawler, search_id=search_id, search_name=search_name, url=url,
                                    screenshots_enabled=screenshots_enabled,
                                    photos_enabled=photos_enabled)
         except Exception:
@@ -134,6 +137,11 @@ def main() -> None:
 
     d = crawl_all()  # noqa: F841 – hold a reference so Twisted won't GC the deferred
     reactor.run()
+
+    successful = sum(1 for crawler in crawlers if crawler.stats and crawler.stats.get_value('run_success'))
+    if successful != len(searches):
+        log.error('%d of %d searches did not complete successfully', len(searches) - successful, len(searches))
+        sys.exit(1)
 
 
 if __name__ == '__main__':
