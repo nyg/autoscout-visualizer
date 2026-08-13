@@ -248,3 +248,24 @@ ALTER TABLE ONLY public.car_photos
 
 ALTER TABLE ONLY public.car_photos
     ADD CONSTRAINT car_photos_photo_id_fkey FOREIGN KEY (photo_id) REFERENCES public.photos(id);
+
+
+CREATE TABLE public.photo_sources (
+    image_key text NOT NULL,
+    photo_id integer NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+ALTER TABLE ONLY public.photo_sources
+    ADD CONSTRAINT photo_sources_pkey PRIMARY KEY (image_key);
+
+
+ALTER TABLE ONLY public.photo_sources
+    ADD CONSTRAINT photo_sources_photo_id_fkey FOREIGN KEY (photo_id) REFERENCES public.photos(id) ON DELETE CASCADE;
+
+
+-- Referencing side of photo_sources_photo_id_fkey. The image_key primary key
+-- cannot seek on photo_id, so without this every deleted photo row costs a full
+-- scan of photo_sources to cascade.
+CREATE INDEX idx_photo_sources_photo_id ON public.photo_sources (photo_id);
