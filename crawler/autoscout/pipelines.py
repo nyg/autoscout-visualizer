@@ -164,6 +164,7 @@ class PhotoPipeline:
         self.bucket_name = os.environ.get('R2_BUCKET_NAME')
         self.public_url = (os.environ.get('R2_PUBLIC_URL') or '').rstrip('/')
         self.workers = crawler.settings.getint('PHOTO_WORKERS')
+        self.photo_sources_ready: bool | None = None
         self.session = requests.Session()
         self.session.mount('https://', HTTPAdapter(pool_connections=self.workers, pool_maxsize=self.workers))
 
@@ -206,6 +207,9 @@ class PhotoPipeline:
 
         try:
             connection = get_shared_connection(self.crawler)
+            if not self._ensure_photo_sources(connection):
+                return []
+
             known = self._resolve_known_keys(connection, item.image_keys)
 
             resolved: dict[int, int] = {}
@@ -232,6 +236,21 @@ class PhotoPipeline:
             logger.error(f'Photo processing failed for {item.vehicle_id}: {e}', exc_info=True)
             self.crawler.stats.inc_value('photos/car_failed')
             return []
+
+    def _ensure_photo_sources(self, connection: psycopg.Connection) -> bool:
+        if self.photo_sources_ready is None:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    (self.photo_sources_ready,) = cursor.execute(
+                        "SELECT to_regclass('public.photo_sources') IS NOT NULL").fetchone()
+
+            if not self.photo_sources_ready:
+                self.crawler.stats.set_value('photos/schema_missing', 1)
+                self.crawler.spider.logger.error(
+                    'Table photo_sources does not exist — skipping photos for this entire run. '
+                    'Apply the photo_sources DDL from crawler/SCHEMA.sql to the database, then re-run.')
+
+        return self.photo_sources_ready
 
     def _resolve_known_keys(self, connection: psycopg.Connection, image_keys: list[str]) -> dict[str, int]:
         with connection.transaction():
