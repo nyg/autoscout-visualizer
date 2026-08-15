@@ -75,7 +75,7 @@ class CarItem:
     screenshot_id: int | None = None
     search_run_id: int | None = None
     image_keys: list[str] = field(default_factory=list)
-    photo_ids: list[int] = field(default_factory=list)
+    photo_refs: list[tuple[int, int]] = field(default_factory=list)
 
     def __repr__(self) -> str:
         return repr({'vehicle_id': self.vehicle_id, 'title': self.title})

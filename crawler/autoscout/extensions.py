@@ -54,7 +54,9 @@ class SearchRunExtension:
             request_count = stats.get('response_received_count', 0)
             finish_reason = stats.get('finish_reason', 'unknown')
             spider_exception_count = stats.get('spider_exceptions/count', 0)
-            success = cars_found == cars_scraped and not failed_request_count and not spider_exception_count
+            photo_stage_failures = stats.get('photos/car_failed', 0) + stats.get('photos/schema_missing', 0)
+            success = (cars_found == cars_scraped and not failed_request_count
+                       and not spider_exception_count and not photo_stage_failures)
             self.crawler.stats.set_value('run_success', success)
 
             with self.connection.transaction():

@@ -24,6 +24,7 @@ TWISTED_REACTOR = 'twisted.internet.asyncioreactor.AsyncioSelectorReactor'
 RETRY_HTTP_CODES = [500, 502, 503, 504, 522, 524, 408, 429, 403] # adding 403
 
 PGSQL_CONNECT_TIMEOUT = 1
+PHOTO_WORKERS = 8
 
 is_linux_aarch64 = platform.system() == 'Linux' and platform.machine() == 'aarch64'
 

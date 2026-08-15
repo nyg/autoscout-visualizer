@@ -4,12 +4,14 @@ import io
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Any
 
 import psycopg
 import requests
-from psycopg import sql
+from psycopg import Cursor, sql
 from psycopg.types.json import Jsonb
+from requests.adapters import HTTPAdapter
 from scrapy.crawler import Crawler
 from scrapy.statscollectors import StatsCollector
 
@@ -135,6 +137,17 @@ class ScreenshotPipeline:
         return webp_buffer.getvalue(), width, height, len(png_data)
 
 
+@dataclass(slots=True)
+class EncodedPhoto:
+    image_key: str
+    position: int
+    md5_hash: str
+    webp: bytes
+    width: int
+    height: int
+    original_size: int
+
+
 class PhotoPipeline:
     """Downloads listing photos, compresses to WebP, deduplicates via MD5, and uploads to R2."""
 
@@ -143,13 +156,17 @@ class PhotoPipeline:
     def __init__(self, crawler: Crawler) -> None:
         self.crawler = crawler
         self.s3_client: Any = None
+        self.executor: ThreadPoolExecutor | None = None
         self.r2_configured = all(os.environ.get(k) for k in (
             'R2_ENDPOINT_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
             'R2_BUCKET_NAME', 'R2_PUBLIC_URL'
         ))
         self.bucket_name = os.environ.get('R2_BUCKET_NAME')
         self.public_url = (os.environ.get('R2_PUBLIC_URL') or '').rstrip('/')
+        self.workers = crawler.settings.getint('PHOTO_WORKERS')
+        self.photo_sources_ready: bool | None = None
         self.session = requests.Session()
+        self.session.mount('https://', HTTPAdapter(pool_connections=self.workers, pool_maxsize=self.workers))
 
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> 'PhotoPipeline':
@@ -158,8 +175,21 @@ class PhotoPipeline:
     def open_spider(self) -> None:
         if not self.r2_configured:
             self.crawler.spider.logger.warning('R2 not configured — photos will not be downloaded')
+            return
+
+        import boto3
+        self.s3_client = boto3.client(
+            's3',
+            endpoint_url=os.environ['R2_ENDPOINT_URL'],
+            aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'],
+            aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'],
+            region_name='auto',
+        )
+        self.executor = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix='photo')
 
     def close_spider(self) -> None:
+        if self.executor:
+            self.executor.shutdown(wait=True)
         self.session.close()
 
     def process_item(self, item: CarItem | SellerItem) -> CarItem | SellerItem:
@@ -168,96 +198,177 @@ class PhotoPipeline:
         if not self.crawler.spider.photos_enabled:
             return item
 
-        item.photo_ids = self._process_photos(item)
+        item.photo_refs = self._process_photos(item)
         return item
 
-    def _process_photos(self, item: CarItem) -> list[int]:
+    def _process_photos(self, item: CarItem) -> list[tuple[int, int]]:
         """Download, compress, deduplicate, and upload all listing photos."""
-        photo_ids = []
         logger = self.crawler.spider.logger
 
-        # Download images in parallel (max 4 threads to avoid rate limiting)
-        downloaded = {}
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = {
-                pool.submit(self._download_image, key): (pos, key)
-                for pos, key in enumerate(item.image_keys)
-            }
-            for future in as_completed(futures):
-                pos, key = futures[future]
-                try:
-                    data = future.result()
-                    if data:
-                        downloaded[pos] = data
-                except Exception as e:
-                    logger.warning(f'Photo download failed for {item.vehicle_id} key={key}: {e}')
+        try:
+            connection = get_shared_connection(self.crawler)
+            if not self._ensure_photo_sources(connection):
+                return []
 
-        if not downloaded:
-            return photo_ids
+            known = self._resolve_known_keys(connection, item.image_keys)
 
-        self._ensure_s3_client()
-        connection = get_shared_connection(self.crawler)
+            resolved: dict[int, int] = {}
+            pending: list[tuple[int, str]] = []
+            for position, image_key in enumerate(item.image_keys):
+                if (photo_id := known.get(image_key)) is not None:
+                    resolved[position] = photo_id
+                else:
+                    pending.append((position, image_key))
 
-        for pos in sorted(downloaded.keys()):
+            key_hits = len(resolved)
+            self.crawler.stats.inc_value('photos/key_hit', key_hits)
+
+            if pending:
+                encoded = self._fetch_and_encode(item, pending)
+                resolved.update(self._store(connection, encoded))
+
+            photo_refs = sorted(resolved.items())
+            logger.info(
+                f'Photos for {item.vehicle_id}: {len(photo_refs)}/{len(item.image_keys)} stored '
+                f'({key_hits} cached, {len(pending)} fetched)')
+            return photo_refs
+        except Exception as e:
+            logger.error(f'Photo processing failed for {item.vehicle_id}: {e}', exc_info=True)
+            self.crawler.stats.inc_value('photos/car_failed')
+            return []
+
+    def _ensure_photo_sources(self, connection: psycopg.Connection) -> bool:
+        if self.photo_sources_ready is None:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    (self.photo_sources_ready,) = cursor.execute(
+                        "SELECT to_regclass('public.photo_sources') IS NOT NULL").fetchone()
+
+            if not self.photo_sources_ready:
+                self.crawler.stats.set_value('photos/schema_missing', 1)
+                self.crawler.spider.logger.error(
+                    'Table photo_sources does not exist — skipping photos for this entire run. '
+                    'Apply the photo_sources DDL from crawler/SCHEMA.sql to the database, then re-run.')
+
+        return self.photo_sources_ready
+
+    def _resolve_known_keys(self, connection: psycopg.Connection, image_keys: list[str]) -> dict[str, int]:
+        with connection.transaction():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    'SELECT image_key, photo_id FROM photo_sources WHERE image_key = ANY(%s)',
+                    (image_keys,))
+                return dict(cursor.fetchall())
+
+    def _fetch_and_encode(self, item: CarItem, pending: list[tuple[int, str]]) -> list[EncodedPhoto]:
+        logger = self.crawler.spider.logger
+        encoded = []
+
+        futures = {self.executor.submit(self._download_and_encode, position, image_key): image_key
+                   for position, image_key in pending}
+        for future in as_completed(futures):
             try:
-                photo_id = self._upload_photo(item, downloaded[pos], connection)
-                if photo_id is not None:
-                    photo_ids.append(photo_id)
+                encoded.append(future.result())
             except Exception as e:
-                logger.error(f'Photo upload failed for {item.vehicle_id} pos={pos}: {e}')
+                logger.warning(f'Photo download failed for {item.vehicle_id} key={futures[future]}: {e}')
+                self.crawler.stats.inc_value('photos/failed')
 
-        if photo_ids:
-            logger.info(f'Photos for {item.vehicle_id}: {len(photo_ids)}/{len(item.image_keys)} stored')
+        self.crawler.stats.inc_value('photos/downloaded', len(encoded))
+        return encoded
 
-        return photo_ids
+    def _download_and_encode(self, position: int, image_key: str) -> EncodedPhoto:
+        response = self.session.get(f'{self.PHOTO_BASE_URL}{image_key}', timeout=15)
+        response.raise_for_status()
+        webp_data, width, height, original_size = self._compress_photo(response.content)
+        return EncodedPhoto(
+            image_key=image_key,
+            position=position,
+            md5_hash=hashlib.md5(webp_data).hexdigest(),
+            webp=webp_data,
+            width=width,
+            height=height,
+            original_size=original_size)
 
-    def _download_image(self, key: str) -> bytes | None:
-        """Download a listing image from AutoScout24."""
-        url = f'{self.PHOTO_BASE_URL}{key}'
-        resp = self.session.get(url, timeout=15)
-        resp.raise_for_status()
-        return resp.content
+    def _store(self, connection: psycopg.Connection, encoded: list[EncodedPhoto]) -> dict[int, int]:
+        by_hash: dict[str, EncodedPhoto] = {}
+        for photo in encoded:
+            by_hash.setdefault(photo.md5_hash, photo)
 
-    def _upload_photo(self, item: CarItem, image_data: bytes, connection: psycopg.Connection) -> int | None:
-        """Compress, dedup, and upload a single photo. Returns the photo ID."""
-        webp_data, width, height, original_size = self._compress_photo(image_data)
-        compressed_size = len(webp_data)
-        md5_hash = hashlib.md5(webp_data).hexdigest()
+        photo_ids = self._match_existing_hashes(connection, list(by_hash))
+        self.crawler.stats.inc_value('photos/md5_hit', len(photo_ids))
+
+        uploaded = self._upload_photos([photo for md5_hash, photo in by_hash.items() if md5_hash not in photo_ids])
 
         with connection.transaction():
             with connection.cursor() as cursor:
-                cursor.execute('SELECT id FROM photos WHERE md5_hash = %s', (md5_hash,))
+                inserted = self._insert_photos(cursor, uploaded)
+                photo_ids |= inserted
+                self._record_sources(cursor, encoded, photo_ids)
 
-                if existing := cursor.fetchone():
-                    return existing[0]
+        self.crawler.stats.inc_value('photos/uploaded', len(inserted))
+        return {photo.position: photo_ids[photo.md5_hash] for photo in encoded if photo.md5_hash in photo_ids}
 
-                r2_key = f'photos/{uuid.uuid4()}.webp'
-                r2_url = f'{self.public_url}/{r2_key}'
+    def _match_existing_hashes(self, connection: psycopg.Connection, hashes: list[str]) -> dict[str, int]:
+        if not hashes:
+            return {}
+        with connection.transaction():
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT md5_hash, id FROM photos WHERE md5_hash = ANY(%s::bpchar[])', (hashes,))
+                return dict(cursor.fetchall())
 
-                self.s3_client.put_object(
-                    Bucket=self.bucket_name,
-                    Key=r2_key,
-                    Body=webp_data,
-                    ContentType='image/webp',
-                )
+    def _upload_photos(self, photos: list[EncodedPhoto]) -> list[tuple[EncodedPhoto, str, str]]:
+        logger = self.crawler.spider.logger
+        uploaded = []
 
-                cursor.execute('''
-                    INSERT INTO photos (md5_hash, r2_key, r2_url, format, width, height, original_size, compressed_size)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                ''', (md5_hash, r2_key, r2_url, 'webp', width, height, original_size, compressed_size))
-                return cursor.fetchone()[0]
+        futures = {self.executor.submit(self._upload_photo, photo): photo for photo in photos}
+        for future in as_completed(futures):
+            photo = futures[future]
+            try:
+                uploaded.append((photo, *future.result()))
+            except Exception as e:
+                logger.error(f'Photo upload failed for key={photo.image_key}: {e}')
+                self.crawler.stats.inc_value('photos/failed')
 
-    def _ensure_s3_client(self) -> None:
-        if self.s3_client is None:
-            import boto3
-            self.s3_client = boto3.client(
-                's3',
-                endpoint_url=os.environ['R2_ENDPOINT_URL'],
-                aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'],
-                aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'],
-                region_name='auto',
-            )
+        return uploaded
+
+    def _upload_photo(self, photo: EncodedPhoto) -> tuple[str, str]:
+        r2_key = f'photos/{uuid.uuid4()}.webp'
+        self.s3_client.put_object(
+            Bucket=self.bucket_name,
+            Key=r2_key,
+            Body=photo.webp,
+            ContentType='image/webp',
+        )
+        return r2_key, f'{self.public_url}/{r2_key}'
+
+    @staticmethod
+    def _insert_photos(cursor: Cursor, uploaded: list[tuple[EncodedPhoto, str, str]]) -> dict[str, int]:
+        if not uploaded:
+            return {}
+
+        row = sql.SQL('({})').format(sql.SQL(', ').join([sql.Placeholder()] * 8))
+        statement = sql.SQL('''
+            INSERT INTO photos (md5_hash, r2_key, r2_url, format, width, height, original_size, compressed_size)
+            VALUES {}
+            ON CONFLICT (md5_hash) DO NOTHING
+            RETURNING md5_hash, id
+        ''').format(sql.SQL(', ').join([row] * len(uploaded)))
+
+        parameters = [parameter
+                      for photo, r2_key, r2_url in uploaded
+                      for parameter in (photo.md5_hash, r2_key, r2_url, 'webp',
+                                        photo.width, photo.height, photo.original_size, len(photo.webp))]
+        cursor.execute(statement, parameters)
+        return dict(cursor.fetchall())
+
+    @staticmethod
+    def _record_sources(cursor: Cursor, encoded: list[EncodedPhoto], photo_ids: dict[str, int]) -> None:
+        mappings = [(photo.image_key, photo_ids[photo.md5_hash])
+                    for photo in encoded if photo.md5_hash in photo_ids]
+        if mappings:
+            cursor.executemany(
+                'INSERT INTO photo_sources (image_key, photo_id) VALUES (%s, %s) ON CONFLICT (image_key) DO NOTHING',
+                mappings)
 
     @staticmethod
     def _compress_photo(image_data: bytes) -> tuple[bytes, int, int, int]:
@@ -278,7 +389,7 @@ class PostgreSQLPipeline:
 
         self.batch_size = 1000
         self.car_buffer: list[dict[str, Any]] = []
-        self.car_photo_buffer: list[tuple[list[int]]] = []
+        self.car_photo_buffer: list[list[tuple[int, int]]] = []
         self.seller_buffer: list[dict[str, Any]] = []
         self.cars_inserted = 0
         self.sellers_inserted = 0
@@ -305,13 +416,13 @@ class PostgreSQLPipeline:
             case SellerItem():
                 self.seller_buffer.append(dataclasses.asdict(item))
             case CarItem():
-                photo_ids = item.photo_ids
+                photo_refs = item.photo_refs
                 car_dict = dataclasses.asdict(item)
                 car_dict.pop('screenshot', None)
                 car_dict.pop('image_keys', None)
-                car_dict.pop('photo_ids', None)
+                car_dict.pop('photo_refs', None)
                 self.car_buffer.append(car_dict)
-                self.car_photo_buffer.append(photo_ids)
+                self.car_photo_buffer.append(photo_refs)
 
         if len(self.seller_buffer) >= self.batch_size or len(self.car_buffer) >= self.batch_size:
             self.flush_buffers()
@@ -357,11 +468,11 @@ class PostgreSQLPipeline:
                         car_ids.append(cursor.fetchone()[0])
 
                     # Insert car_photos junction rows
-                    for car_id, photo_ids in zip(car_ids, self.car_photo_buffer):
-                        if photo_ids:
+                    for car_id, photo_refs in zip(car_ids, self.car_photo_buffer):
+                        if photo_refs:
                             cursor.executemany(
                                 'INSERT INTO car_photos (car_id, photo_id, position) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING',
-                                [(car_id, pid, pos) for pos, pid in enumerate(photo_ids)]
+                                [(car_id, photo_id, position) for position, photo_id in photo_refs]
                             )
 
                     self.cars_inserted += len(car_ids)
