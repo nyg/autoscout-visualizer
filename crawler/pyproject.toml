@@ -4,17 +4,17 @@ version = "1.0.0"
 description = "AutoScout24 car listings crawler"
 requires-python = ">=3.14"
 dependencies = [
-    "boto3==1.43.59",
+    "boto3==1.43.83",
     "jinja2==3.1.6",
     "njsparser==2.16",
     "pillow==12.3.0",
     "psycopg[binary]==3.3.4",
-    "python-dotenv==1.2.2",
+    "python-dotenv==1.2.3",
     "requests==2.34.2",
-    "resend==2.35.0",
-    "scrapy==2.17.0",
+    "resend==2.42.0",
+    "scrapy==2.18.0",
     "scrapy-seleniumbase-cdp==2.0.4",
-    "seleniumbase==4.51.8",
+    "seleniumbase==4.52.4",
 ]
 
 [build-system]
