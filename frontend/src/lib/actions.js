@@ -343,6 +343,82 @@ export async function deleteOldScreenshots(prevState, formData) {
 }
 
 
+function retiredPhotoIds(sql, cutoff) {
+   return sql`
+      with latest_runs as (
+         select search_id, max(search_run_id) as run_id
+           from cars
+          group by search_id
+      )
+      select cp.photo_id
+        from car_photos cp
+       inner join cars c on cp.car_id = c.id
+        left join latest_runs lr on lr.search_id = c.search_id
+       group by cp.photo_id
+      having bool_and(c.search_run_id is distinct from lr.run_id)
+         and max(c.date_in) < ${cutoff}`
+}
+
+export async function deleteRetiredPhotos(prevState, formData) {
+   if (formData.get('cancel')) {
+      return null
+   }
+
+   const confirmedDays = formData.get('confirm')
+   const days = parseInt(confirmedDays ?? formData.get('days'), 10)
+   const confirmed = confirmedDays !== null
+
+   if (!Number.isInteger(days) || days < MIN_RETENTION_DAYS || days > MAX_RETENTION_DAYS) {
+      return { error: `Retention must be a whole number of days between ${MIN_RETENTION_DAYS} and ${MAX_RETENTION_DAYS}.` }
+   }
+
+   try {
+      const cutoff = new Date()
+      cutoff.setDate(cutoff.getDate() - days)
+
+      if (!confirmed) {
+         const photoIds = (await retiredPhotoIds(pgSql, cutoff)).map(row => row.photo_id)
+         let totalSize = 0
+         for (const ids of batched(photoIds)) {
+            const [info] = await pgSql`
+               select coalesce(sum(compressed_size), 0)::bigint as total_size
+                 from photos where id in ${pgSql(ids)}`
+            totalSize += Number(info.total_size)
+         }
+         return {
+            needsConfirm: true,
+            count: photoIds.length,
+            totalSize,
+            _days: days,
+         }
+      }
+
+      const r2Keys = await pgSql.begin(async pgSql => {
+         const photoIds = (await retiredPhotoIds(pgSql, cutoff)).map(row => row.photo_id)
+         const keys = []
+         for (const ids of batched(photoIds)) {
+            await pgSql`delete from car_photos where photo_id in ${pgSql(ids)}`
+            const deleted = await pgSql`
+               delete from photos where id in ${pgSql(ids)} returning r2_key`
+            keys.push(...deleted.map(row => row.r2_key).filter(Boolean))
+         }
+         return keys
+      })
+
+      const r2Result = await deleteR2Objects(r2Keys)
+
+      revalidatePath('/', 'layout')
+      return {
+         success: true,
+         deletedCount: r2Keys.length,
+         warning: r2Warning(r2Result),
+      }
+   } catch (e) {
+      console.error('Failed to delete retired photos:', e.message)
+      return { error: 'Failed to delete pictures of gone listings.' }
+   }
+}
+
 const ID_BATCH_SIZE = 1000
 
 function batched(ids) {

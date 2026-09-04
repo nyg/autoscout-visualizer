@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
-import { deleteOldScreenshots } from '@/lib/actions'
+import { deleteOldScreenshots, deleteRetiredPhotos } from '@/lib/actions'
 import { formatBytes } from '@/lib/format'
 import { useFormatter } from '@/lib/formatter-context'
 
@@ -98,26 +98,36 @@ export default function ImageStorage({ screenshotData, screenshotSummary, photoD
                />
             </div>
 
-            <CleanupSection />
+            <div className="flex flex-col gap-3 border-t pt-4">
+               <CleanupForm
+                  action={deleteOldScreenshots}
+                  label="Delete screenshots older than"
+                  noun="screenshot"
+               />
+               <CleanupForm
+                  action={deleteRetiredPhotos}
+                  label="Delete pictures of listings gone for more than"
+                  noun="picture"
+                  hint="Only pictures whose listings have all dropped out of their search's latest run. Pictures of active listings are kept — deleting those would just make the next crawl download them again."
+               />
+            </div>
          </CardContent>
       </Card>
    )
 }
 
 
-function CleanupSection() {
-   const [state, submitAction, pending] = useActionState(deleteOldScreenshots, null)
-
+function CleanupForm({ action, label, noun, hint }) {
+   const [state, submitAction, pending] = useActionState(action, null)
    const confirming = Boolean(state?.needsConfirm)
+   const inputId = `retention-${noun}`
 
    return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1">
          <form action={submitAction} className="flex items-center gap-2 flex-wrap">
-            <label htmlFor="retention-days" className="text-sm text-muted-foreground">
-               Delete screenshots older than
-            </label>
+            <label htmlFor={inputId} className="text-sm text-muted-foreground">{label}</label>
             <input
-               id="retention-days"
+               id={inputId}
                name="days"
                type="number"
                defaultValue={state?.needsConfirm ? state._days : 30}
@@ -132,7 +142,7 @@ function CleanupSection() {
             {confirming ? (
                <>
                   <span className="text-sm text-destructive">
-                     Delete {state.count} screenshot{state.count !== 1 ? 's' : ''} ({formatBytes(state.totalSize)})?
+                     Delete {state.count} {noun}{state.count !== 1 ? 's' : ''} ({formatBytes(state.totalSize)})?
                   </span>
                   <button
                      type="submit"
@@ -165,10 +175,12 @@ function CleanupSection() {
             )}
          </form>
 
+         {hint && !state?.success && <p className="text-xs text-muted-foreground">{hint}</p>}
+
          {state?.success && (
             <>
                <p className="text-sm text-green-600">
-                  Deleted {state.deletedCount} screenshot{state.deletedCount !== 1 ? 's' : ''}.
+                  Deleted {state.deletedCount} {noun}{state.deletedCount !== 1 ? 's' : ''}.
                </p>
                {state.warning && (
                   <p className="text-sm text-destructive">
