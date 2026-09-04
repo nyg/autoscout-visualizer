@@ -24,7 +24,9 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - Cars table (sorting, column visibility, seller cell): `frontend/src/components/cars.js`
 - Lightbox image viewer: `frontend/src/components/lightbox.js`
 - Google Places integration: `frontend/src/components/place-details.js`
-- Screenshot storage chart + cleanup UI: `frontend/src/components/screenshot-storage.js`
+- Storage usage charts + screenshot cleanup UI: `frontend/src/components/image-storage.js`
+- DB/R2 image reconciliation UI: `frontend/src/components/storage-reconciliation.js`
+- Reconciliation classification (pure): `frontend/src/lib/reconcile.js`
 - Search runs client component: `frontend/src/components/search-runs.js`
 - Number/date formatting: `frontend/src/lib/format.js`
 - Formatter React Context: `frontend/src/lib/formatter-context.js`
@@ -94,10 +96,28 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - The settings page is a server component that fetches searches from the database and renders three sections:
   - **SearchManager** (`search-manager.js`): CRUD for search configurations (name, URL, active toggle, per-search `screenshots_enabled` / `photos_enabled` toggles, copy URL button). Uses Server Actions from `actions.js`.
   - **ClientSettings** (`client-settings.js`): Google Maps API key, home address, and email recipient. Settings are stored in the database `config` table via the `updateConfig` server action.
-  - **ScreenshotStorage** (`screenshot-storage.js`): Bar chart of daily screenshot storage usage and a cleanup form to delete screenshots older than a configurable retention period (30/90/180 days). Uses `deleteOldScreenshots` server action.
+  - **ImageStorage** (`image-storage.js`): Two side-by-side bar charts of daily storage usage — page screenshots and car pictures — plus a cleanup form deleting screenshots older than a free-form number of days (default 30). `deleteOldScreenshots` validates the range 1–3650 server-side; the input's `min`/`max` are a hint, not the check. Car pictures get their own sweep, `deleteRetiredPhotos`, keyed on the listing rather than the row.
+    - A picture is *retired* when **none** of its linked cars sits in its search's latest run and the newest of those cars was last seen more than N days ago. Row age is the wrong test: `photo_sources` makes a re-crawl reuse the existing row, so a picture first downloaded a year ago can belong to a listing that is still live. Both halves of the test matter — MD5 dedup means one picture can serve several listings, and a single live link protects it.
+    - Deleting a live listing's picture is self-defeating anyway: the `photos` delete cascades `photo_sources`, so the next crawl downloads the same bytes again. The sweep only touches listings that have dropped out, which cannot come back without a re-listing.
+    - `car_photos` rows must go before the `photos` rows they reference, and the retired set has to be collected *before* either delete — the query reads `car_photos`, so deleting from it first would leave the second statement matching nothing.
+    - The confirm step reuses **one** form rather than swapping the day input for hidden fields. React reconciles unkeyed siblings by position, so swapping a `defaultValue` input for a `value`-bearing hidden input in the same slot makes React reuse the DOM node and warn that an uncontrolled input became controlled.
+    - The counted retention travels on the Confirm button (`name="confirm" value={state._days}`), not in the visible input, because React resets uncontrolled fields once a form action resolves — the field is back to its default by the time the user confirms, and reading `days` from it would delete a different set than the one that was counted and shown. `Cancel` submits `name="cancel"` and the action returns `null` to clear the state.
+    - Passing a client function to `<form action>` does **not** fire in this setup; `useActionState` must receive the server action directly.
+  - **StorageReconciliation** (`storage-reconciliation.js`): On-demand comparison of the `screenshots`/`photos` tables against the `screenshots/` and `photos/` prefixes in R2, with a fix button per discrepancy class.
 - Maps API key is consumed by `place-details.js` via `useSyncExternalStore` in `cars.js`.
 - Home address is consumed by the directions link in `SellerCell` via `useSyncExternalStore`.
 - Does not dispatch custom events itself; components that depend on these values read them from localStorage (e.g. via `useSyncExternalStore`) for same-tab sync.
+
+## Image storage reconciliation (`/settings`)
+
+- Scanning is manual, never on page load: `scanImageStorage` lists the whole bucket, which is one request per 1000 objects and far too expensive to run every time somebody opens Settings.
+- `reconcileImageStorage` in `actions.js` reads the database **before** listing R2. A row committed after the listing started would otherwise look like a dangling reference, and that is the one race that ordering can eliminate. The opposite race — the crawler uploading an object before committing its row — cannot be ordered away, so recent objects and rows are held back by `RECONCILE_GRACE_HOURS` (24) instead of being reported.
+- Three discrepancy classes, each with its own fix: **dangling** (a `screenshots`/`photos` row whose object is missing) → delete the rows so the crawler re-downloads; **orphaned** (an object under a managed prefix that no row references) → delete the objects; **unreferenced** (a row no `cars`/`car_photos` entry points at, whose object does exist) → delete both.
+- The dangling fix must delete `car_photos` rows before `photos` rows — `car_photos_photo_id_fkey` has no `ON DELETE CASCADE`. Dropping the `photos` row does cascade to `photo_sources`, which is exactly what makes the next crawl download the image again.
+- Fix actions re-run the scan and re-derive their target sets server-side; the browser only ever receives counts, byte totals and up to five sample keys. Nothing a client sends can name an object or row to delete.
+- `listR2Objects` returns `ok: false` and no objects on any failure, including a mid-pagination one. A partially listed bucket would classify every unlisted object's row as dangling, so a truncated listing must never be mistaken for a complete one.
+- A listing that succeeds but returns zero objects while the database still holds rows is rejected as a misconfiguration (wrong bucket, endpoint or key pair) rather than reported as "everything is dangling". This is a real failure mode: an S3 endpoint that does not serve virtual-hosted-style requests answers with a bucket listing the SDK parses as an empty object listing.
+- `classifyImageStorage` in `reconcile.js` is pure — rows plus objects plus a clock in, classification out — so the reconciliation rules can be exercised without a bucket or a database.
 
 ## Google Places integration (`place-details.js`)
 - Uses `@googlemaps/js-api-loader` v2 functional API: `setOptions()` + `importLibrary('places')`.
@@ -108,12 +128,14 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 ## Locale formatting (`format.js` + `formatter-context.js`)
 - The root layout reads the `Accept-Language` HTTP header via `parseAcceptLanguage()` and wraps the app in `<FormatterProvider locale={…}>`.
 - `FormatterProvider` (client component) calls `createFormatters(locale)` once and exposes the result via React Context.
-- All client components — tables and charts alike — call `useFormatter()` to get `{ asDecimal, asShortDate, asMediumDate, asShortMonthYearDate, asShortDayMonthDate, asTime }`. No locale prop-drilling, no module-level formatter singletons.
+- All client components — tables and charts alike — call `useFormatter()` to get `{ asDecimal, asBytes, asShortDate, asMediumDate, asShortMonthYearDate, asShortDayMonthDate, asTime }`. No locale prop-drilling, no module-level formatter singletons.
+- Counts and byte sizes go through `asDecimal` / `asBytes` rather than being interpolated raw, so digit grouping and the decimal separator follow the viewer's locale (`3,240` in en-US, `3’240` in de-CH, `3 240` and `1,2 GB` in fr-FR). `asBytes` also keeps the unit selection in one place; a helper that formats bytes without the locale formatter is a regression, which is why there is no standalone `formatBytes` export.
 - `asShortDayMonthDate` formats a timestamp as short month + day (no year), e.g. "Jun 27" — used in date-axis charts.
 - Because the same locale is used for SSR and client rendering, there are no hydration mismatches.
 
 ## Project-specific conventions
 - Frontend formatting is intentionally non-default: 3-space indentation, single quotes, no semicolons (`frontend/eslint.config.mjs`). Match existing style exactly.
+- Byte sizes are **decimal**: `asBytes` from `useFormatter()` divides by 1000 and labels B/KB/MB/GB/TB. Cloudflare reserves MiB/GiB for R2 limits and bills storage in decimal GB-month, and the dashboard's bucket size is decimal too, so a binary divisor under a `GB` label would both mislabel the number and disagree with the figure the user is comparing it against (~7% low at GB scale). Never reintroduce a 1024 divisor without switching the labels to KiB/MiB/GiB.
 - Frontend imports use the `@/` alias (`frontend/jsconfig.json`, `components.json`).
 - Python code follows straightforward Scrapy/PEP 8 style; keep changes small and local to the scraper pipeline.
 
@@ -128,5 +150,6 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - Listing photos are stored in R2 via the `photos` table (metadata) and `car_photos` junction table (car_id, photo_id, position). The `/api/photos/[carId]` route returns a JSON array of photo URLs. Car listing queries include a `photo_count` subquery. The lightbox component lazy-loads photos via `fetchMoreUrl` when opened.
 - `photo_sources` (image_key → photo_id) is the crawler's pre-download cache and cascades on `photos` delete. Deleting a `photos` row therefore drops its key mappings, which is exactly what makes the next crawl re-download and re-store that image. Nothing in the frontend needs to touch `photo_sources` — but the cascade is why the orphan cleanup in `deleteSearch` still works, so do not weaken that FK.
 - The `/api/car-screenshots/[vehicleId]` route accepts a `searchId` query param and returns a chronological list of screenshot URLs for a given vehicle — used by the lightbox to display screenshot history.
+- R2 keys are namespaced by prefix: `screenshots/{uuid}.webp` and `photos/{uuid}.webp`. Reconciliation only ever lists and deletes under those two prefixes, so anything else in the bucket is left alone; rows pointing outside them are counted and skipped rather than judged.
 - R2 cleanup is the caller's responsibility: whenever a DB transaction deletes `screenshots` or `photos` rows, collect the `r2_key` values first, then call `deleteR2Objects(r2Keys)` from `frontend/src/lib/r2.js` **after** the transaction commits. It never throws — it returns `{ requestedCount, orphanedCount, reason }`, and the caller must pass that through `r2Warning()` and return the message in its action result so the UI can report orphaned files instead of a false success. See `deleteSearch`, `deleteSearchRun`, and `deleteOldScreenshots` in `actions.js` for the pattern. `r2.js` is `server-only`, never `'use server'` — exporting it as a Server Action would expose bucket deletion as an unauthenticated endpoint.
 - The `searches` table has per-search `screenshots_enabled` and `photos_enabled` boolean columns (default `true`). The crawler spider reads these at startup and the `ScreenshotPipeline`/`PhotoPipeline` skip processing when the flag is `false`. When adding new per-search feature flags, update `SCHEMA.sql`, the spider constructor, the relevant pipeline, and the `updateSearch`/`toggleSearch*` actions together.

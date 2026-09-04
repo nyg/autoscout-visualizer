@@ -11,17 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
    createSearch, deleteSearch, toggleSearchActive, toggleSearchPhotos, toggleSearchScreenshots, updateSearch
 } from '@/lib/actions'
+import { useFormatter } from '@/lib/formatter-context'
 
-
-function formatBytes(bytes) {
-   if (bytes === 0) {
-      return '0 B'
-   }
-   const units = ['B', 'KB', 'MB', 'GB']
-   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-   const value = bytes / Math.pow(1024, i)
-   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`
-}
 
 
 function CopyUrlButton({ url }) {
@@ -51,6 +42,7 @@ function CopyUrlButton({ url }) {
 }
 
 function SearchRow({ search }) {
+   const { asBytes, asDecimal } = useFormatter()
    const [editing, setEditing] = useState(false)
    const [, submitUpdate, updatingPending] = useActionState(async (prev, formData) => {
       const result = await updateSearch(prev, formData)
@@ -163,18 +155,18 @@ function SearchRow({ search }) {
                <CopyUrlButton url={search.url} />
             </span>
          </td>
-         <td className="p-2 text-right text-muted-foreground whitespace-nowrap">{search.run_count}</td>
-         <td className="p-2 text-right text-muted-foreground whitespace-nowrap">{search.car_count}</td>
+         <td className="p-2 text-right text-muted-foreground whitespace-nowrap">{asDecimal(search.run_count)}</td>
+         <td className="p-2 text-right text-muted-foreground whitespace-nowrap">{asDecimal(search.car_count)}</td>
          <td className="p-2 text-right text-muted-foreground whitespace-nowrap">
-            {search.screenshot_count}
+            {asDecimal(search.screenshot_count)}
             {search.screenshot_size > 0 && (
-               <span className="text-xs ml-1">({formatBytes(search.screenshot_size)})</span>
+               <span className="text-xs ml-1">({asBytes(search.screenshot_size)})</span>
             )}
          </td>
          <td className="p-2 text-right text-muted-foreground whitespace-nowrap">
-            {search.photo_count}
+            {asDecimal(search.photo_count)}
             {search.photo_size > 0 && (
-               <span className="text-xs ml-1">({formatBytes(search.photo_size)})</span>
+               <span className="text-xs ml-1">({asBytes(search.photo_size)})</span>
             )}
          </td>
          <td className="p-2 text-center whitespace-nowrap">

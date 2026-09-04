@@ -1,11 +1,12 @@
 import { Suspense } from 'react'
 
 import ClientSettings from '@/components/client-settings'
-import ScreenshotStorage from '@/components/screenshot-storage'
+import ImageStorage from '@/components/image-storage'
 import SearchManager from '@/components/search-manager'
+import StorageReconciliation from '@/components/storage-reconciliation'
 import {
-   fetchConfig, fetchScreenshotStorageByDay,
-   fetchScreenshotStorageSummary, fetchSearches
+   fetchConfig, fetchPhotoStorageByDay, fetchPhotoStorageSummary,
+   fetchScreenshotStorageByDay, fetchScreenshotStorageSummary, fetchSearches
 } from '@/lib/data'
 
 export default async function SettingsPage() {
@@ -13,14 +14,22 @@ export default async function SettingsPage() {
    const config = await fetchConfig()
    const screenshotData = fetchScreenshotStorageByDay()
    const screenshotSummary = fetchScreenshotStorageSummary()
+   const photoData = fetchPhotoStorageByDay()
+   const photoSummary = fetchPhotoStorageSummary()
 
    return (
       <div className="mx-auto flex max-w-screen-xl flex-col gap-4 px-4">
          <SearchManager searches={searches} />
          <ClientSettings config={config} />
-         <Suspense fallback={<p className="text-sm text-muted-foreground">Loading screenshot data…</p>}>
-            <ScreenshotStorage data={screenshotData} summary={screenshotSummary} />
+         <Suspense fallback={<p className="text-sm text-muted-foreground">Loading storage data…</p>}>
+            <ImageStorage
+               screenshotData={screenshotData}
+               screenshotSummary={screenshotSummary}
+               photoData={photoData}
+               photoSummary={photoSummary}
+            />
          </Suspense>
+         <StorageReconciliation />
       </div>
    )
 }
