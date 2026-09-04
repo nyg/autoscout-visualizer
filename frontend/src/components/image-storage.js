@@ -18,7 +18,7 @@ const chartConfig = {
 
 function StorageChart({ title, noun, data, summary }) {
    const dailyData = use(data)
-   const { total_count, total_size } = use(summary)
+   const { total_count, total_size } = summary
    const { asMediumDate, asShortDayMonthDate } = useFormatter()
 
    const chartData = dailyData.map(d => ({
@@ -77,24 +77,35 @@ function StorageChart({ title, noun, data, summary }) {
 
 
 export default function ImageStorage({ screenshotData, screenshotSummary, photoData, photoSummary }) {
+   const screenshots = use(screenshotSummary)
+   const photos = use(photoSummary)
+
+   const totalCount = screenshots.total_count + photos.total_count
+   const totalSize = Number(screenshots.total_size) + Number(photos.total_size)
+
    return (
       <Card>
          <CardHeader>
             <CardTitle>Image Storage</CardTitle>
          </CardHeader>
          <CardContent className="flex flex-col gap-4">
+            <p className="text-sm">
+               <span className="font-medium">{formatBytes(totalSize)}</span>
+               {' '}across {totalCount} image{totalCount !== 1 ? 's' : ''} in total.
+            </p>
+
             <div className="grid gap-6 md:grid-cols-2">
                <StorageChart
                   title="Page screenshots"
                   noun="screenshot"
                   data={screenshotData}
-                  summary={screenshotSummary}
+                  summary={screenshots}
                />
                <StorageChart
                   title="Car pictures"
                   noun="picture"
                   data={photoData}
-                  summary={photoSummary}
+                  summary={photos}
                />
             </div>
 
@@ -108,7 +119,6 @@ export default function ImageStorage({ screenshotData, screenshotSummary, photoD
                   action={deleteRetiredPhotos}
                   label="Delete pictures of listings gone for more than"
                   noun="picture"
-                  hint="Only pictures whose listings have all dropped out of their search's latest run. Pictures of active listings are kept — deleting those would just make the next crawl download them again."
                />
             </div>
          </CardContent>
@@ -117,7 +127,7 @@ export default function ImageStorage({ screenshotData, screenshotSummary, photoD
 }
 
 
-function CleanupForm({ action, label, noun, hint }) {
+function CleanupForm({ action, label, noun }) {
    const [state, submitAction, pending] = useActionState(action, null)
    const confirming = Boolean(state?.needsConfirm)
    const inputId = `retention-${noun}`
@@ -174,8 +184,6 @@ function CleanupForm({ action, label, noun, hint }) {
                </button>
             )}
          </form>
-
-         {hint && !state?.success && <p className="text-xs text-muted-foreground">{hint}</p>}
 
          {state?.success && (
             <>
