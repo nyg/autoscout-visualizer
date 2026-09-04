@@ -286,8 +286,13 @@ const MIN_RETENTION_DAYS = 1
 const MAX_RETENTION_DAYS = 3650
 
 export async function deleteOldScreenshots(prevState, formData) {
-   const days = parseInt(formData.get('days'), 10)
-   const confirmed = formData.get('confirmed') === 'true'
+   if (formData.get('cancel')) {
+      return null
+   }
+
+   const confirmedDays = formData.get('confirm')
+   const days = parseInt(confirmedDays ?? formData.get('days'), 10)
+   const confirmed = confirmedDays !== null
 
    if (!Number.isInteger(days) || days < MIN_RETENTION_DAYS || days > MAX_RETENTION_DAYS) {
       return { error: `Retention must be a whole number of days between ${MIN_RETENTION_DAYS} and ${MAX_RETENTION_DAYS}.` }

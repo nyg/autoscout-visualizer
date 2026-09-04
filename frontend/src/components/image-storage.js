@@ -108,68 +108,77 @@ export default function ImageStorage({ screenshotData, screenshotSummary, photoD
 function CleanupSection() {
    const [state, submitAction, pending] = useActionState(deleteOldScreenshots, null)
 
-   if (state?.success) {
-      return (
-         <div className="flex flex-col gap-1">
-            <p className="text-sm text-green-600">
-               Deleted {state.deletedCount} screenshot{state.deletedCount !== 1 ? 's' : ''}.
-            </p>
-            {state.warning && (
-               <p className="text-sm text-destructive">
-                  {state.warning} They are orphaned in storage and must be removed manually.
-               </p>
-            )}
-         </div>
-      )
-   }
-
-   if (state?.needsConfirm) {
-      return (
-         <form action={submitAction} className="flex items-center gap-2 flex-wrap">
-            <input type="hidden" name="days" value={state._days} />
-            <input type="hidden" name="confirmed" value="true" />
-            <span className="text-sm text-destructive">
-               Delete {state.count} screenshot{state.count !== 1 ? 's' : ''} ({formatBytes(state.totalSize)})?
-            </span>
-            <button
-               type="submit"
-               disabled={pending}
-               autoFocus
-               className="rounded-md border border-destructive/30 px-3 py-1 text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-            >
-               {pending ? 'Deleting…' : 'Confirm'}
-            </button>
-         </form>
-      )
-   }
+   const confirming = Boolean(state?.needsConfirm)
 
    return (
-      <form action={submitAction} className="flex items-center gap-2 flex-wrap">
-         <label htmlFor="retention-days" className="text-sm text-muted-foreground">
-            Delete screenshots older than
-         </label>
-         <input
-            id="retention-days"
-            name="days"
-            type="number"
-            defaultValue="30"
-            min="1"
-            max="3650"
-            step="1"
-            required
-            className="w-20 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring"
-         />
-         <span className="text-sm text-muted-foreground">days</span>
-         <button
-            type="submit"
-            disabled={pending}
-            className="rounded-md border border-destructive/30 px-3 py-1 text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-         >
-            {pending ? 'Checking…' : 'Delete'}
-         </button>
-         {state?.error && (
-            <span className="text-sm text-destructive">{state.error}</span>
+      <div className="flex flex-col gap-2">
+         <form action={submitAction} className="flex items-center gap-2 flex-wrap">
+            <label htmlFor="retention-days" className="text-sm text-muted-foreground">
+               Delete screenshots older than
+            </label>
+            <input
+               id="retention-days"
+               name="days"
+               type="number"
+               defaultValue={state?.needsConfirm ? state._days : 30}
+               min="1"
+               max="3650"
+               step="1"
+               required
+               readOnly={confirming}
+               className="w-20 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ring read-only:text-muted-foreground"
+            />
+            <span className="text-sm text-muted-foreground">days</span>
+            {confirming ? (
+               <>
+                  <span className="text-sm text-destructive">
+                     Delete {state.count} screenshot{state.count !== 1 ? 's' : ''} ({formatBytes(state.totalSize)})?
+                  </span>
+                  <button
+                     type="submit"
+                     name="confirm"
+                     value={state._days}
+                     disabled={pending}
+                     autoFocus
+                     className="rounded-md border border-destructive/30 px-3 py-1 text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                  >
+                     {pending ? 'Deleting…' : 'Confirm'}
+                  </button>
+                  <button
+                     type="submit"
+                     name="cancel"
+                     value="true"
+                     disabled={pending}
+                     className="rounded-md border px-3 py-1 text-sm transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                     Cancel
+                  </button>
+               </>
+            ) : (
+               <button
+                  type="submit"
+                  disabled={pending}
+                  className="rounded-md border border-destructive/30 px-3 py-1 text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+               >
+                  {pending ? 'Checking…' : 'Delete'}
+               </button>
+            )}
+         </form>
+
+         {state?.success && (
+            <>
+               <p className="text-sm text-green-600">
+                  Deleted {state.deletedCount} screenshot{state.deletedCount !== 1 ? 's' : ''}.
+               </p>
+               {state.warning && (
+                  <p className="text-sm text-destructive">
+                     {state.warning} They are orphaned in storage and must be removed manually.
+                  </p>
+               )}
+            </>
          )}
-      </form>
+
+         {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
+      </div>
    )
 }
