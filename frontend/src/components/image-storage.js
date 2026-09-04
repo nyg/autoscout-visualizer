@@ -6,7 +6,6 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { deleteOldScreenshots, deleteRetiredPhotos } from '@/lib/actions'
-import { formatBytes } from '@/lib/format'
 import { useFormatter } from '@/lib/formatter-context'
 
 
@@ -19,7 +18,7 @@ const chartConfig = {
 function StorageChart({ title, noun, data, summary }) {
    const dailyData = use(data)
    const { total_count, total_size } = summary
-   const { asMediumDate, asShortDayMonthDate } = useFormatter()
+   const { asBytes, asDecimal, asMediumDate, asShortDayMonthDate } = useFormatter()
 
    const chartData = dailyData.map(d => ({
       ...d,
@@ -31,7 +30,7 @@ function StorageChart({ title, noun, data, summary }) {
       <div className="flex flex-col gap-2">
          <p className="text-sm font-medium">{title}</p>
          <p className="text-sm text-muted-foreground">
-            {total_count} {noun}{total_count !== 1 ? 's' : ''} totalling {formatBytes(Number(total_size))}.
+            {asDecimal(total_count)} {noun}{total_count !== 1 ? 's' : ''} totalling {asBytes(Number(total_size))}.
          </p>
          {chartData.length > 0 && (
             <ChartContainer config={chartConfig} className="aspect-auto h-40 w-full">
@@ -48,7 +47,7 @@ function StorageChart({ title, noun, data, summary }) {
                      axisLine={false}
                   />
                   <YAxis
-                     tickFormatter={formatBytes}
+                     tickFormatter={asBytes}
                      tickLine={false}
                      axisLine={false}
                      width={70}
@@ -57,7 +56,7 @@ function StorageChart({ title, noun, data, summary }) {
                      content={
                         <ChartTooltipContent
                            labelFormatter={(_, payload) => asMediumDate(payload[0]?.payload?.date)}
-                           valueFormatter={formatBytes}
+                           valueFormatter={asBytes}
                         />
                      }
                   />
@@ -77,6 +76,7 @@ function StorageChart({ title, noun, data, summary }) {
 
 
 export default function ImageStorage({ screenshotData, screenshotSummary, photoData, photoSummary }) {
+   const { asBytes, asDecimal } = useFormatter()
    const screenshots = use(screenshotSummary)
    const photos = use(photoSummary)
 
@@ -90,8 +90,8 @@ export default function ImageStorage({ screenshotData, screenshotSummary, photoD
          </CardHeader>
          <CardContent className="flex flex-col gap-4">
             <p className="text-sm">
-               <span className="font-medium">{formatBytes(totalSize)}</span>
-               {' '}across {totalCount} image{totalCount !== 1 ? 's' : ''} in total.
+               <span className="font-medium">{asBytes(totalSize)}</span>
+               {' '}across {asDecimal(totalCount)} image{totalCount !== 1 ? 's' : ''} in total.
             </p>
 
             <div className="grid gap-6 md:grid-cols-2">
@@ -128,6 +128,7 @@ export default function ImageStorage({ screenshotData, screenshotSummary, photoD
 
 
 function CleanupForm({ action, label, noun }) {
+   const { asBytes, asDecimal } = useFormatter()
    const [state, submitAction, pending] = useActionState(action, null)
    const confirming = Boolean(state?.needsConfirm)
    const inputId = `retention-${noun}`
@@ -152,7 +153,7 @@ function CleanupForm({ action, label, noun }) {
             {confirming ? (
                <>
                   <span className="text-sm text-destructive">
-                     Delete {state.count} {noun}{state.count !== 1 ? 's' : ''} ({formatBytes(state.totalSize)})?
+                     Delete {asDecimal(state.count)} {noun}{state.count !== 1 ? 's' : ''} ({asBytes(state.totalSize)})?
                   </span>
                   <button
                      type="submit"
@@ -188,7 +189,7 @@ function CleanupForm({ action, label, noun }) {
          {state?.success && (
             <>
                <p className="text-sm text-green-600">
-                  Deleted {state.deletedCount} {noun}{state.deletedCount !== 1 ? 's' : ''}.
+                  Deleted {asDecimal(state.deletedCount)} {noun}{state.deletedCount !== 1 ? 's' : ''}.
                </p>
                {state.warning && (
                   <p className="text-sm text-destructive">

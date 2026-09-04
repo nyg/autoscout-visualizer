@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
    deleteDanglingImageRows, deleteOrphanedR2Objects, deleteUnreferencedImages, scanImageStorage
 } from '@/lib/actions'
-import { formatBytes } from '@/lib/format'
 import { useFormatter } from '@/lib/formatter-context'
 
 
@@ -33,11 +32,11 @@ const FIXES = {
    },
 }
 
-function plural(count, singular, suffix = 's') {
-   return `${count} ${singular}${count !== 1 ? suffix : ''}`
+function pluralize(asDecimal, count, singular, suffix = 's') {
+   return `${asDecimal(count)} ${singular}${count !== 1 ? suffix : ''}`
 }
 
-function confirmDescription(issue, report) {
+function confirmDescription({ asBytes, plural }, issue, report) {
    if (!report) {
       return ''
    }
@@ -45,16 +44,16 @@ function confirmDescription(issue, report) {
       return `This deletes ${plural(report.dangling.screenshotCount, 'screenshot row')} and ${plural(report.dangling.photoCount, 'photo row')} whose image is gone from storage, along with the car links that point at them. The crawler downloads those images again on its next run. This cannot be undone.`
    }
    if (issue === 'orphaned') {
-      return `This permanently deletes ${plural(report.orphaned.count, 'object')} (${formatBytes(report.orphaned.totalBytes)}) from R2. No database row references them. This cannot be undone.`
+      return `This permanently deletes ${plural(report.orphaned.count, 'object')} (${asBytes(report.orphaned.totalBytes)}) from R2. No database row references them. This cannot be undone.`
    }
-   return `This deletes ${plural(report.unreferenced.screenshotCount, 'screenshot')} and ${plural(report.unreferenced.photoCount, 'photo')} that no car points at, from both the database and R2, freeing ${formatBytes(report.unreferenced.totalBytes)}. This cannot be undone.`
+   return `This deletes ${plural(report.unreferenced.screenshotCount, 'screenshot')} and ${plural(report.unreferenced.photoCount, 'photo')} that no car points at, from both the database and R2, freeing ${asBytes(report.unreferenced.totalBytes)}. This cannot be undone.`
 }
 
-function fixMessage(result) {
+function fixMessage({ asBytes, plural }, result) {
    if (result.issue === 'dangling') {
       return `Removed ${plural(result.removedScreenshotCount, 'screenshot row')} and ${plural(result.removedPhotoCount, 'photo row')}. The crawler will download the images again on its next run.`
    }
-   const freed = result.warning ? '' : `, freeing ${formatBytes(result.freedBytes)}`
+   const freed = result.warning ? '' : `, freeing ${asBytes(result.freedBytes)}`
    if (result.issue === 'orphaned') {
       return `Deleted ${plural(result.removedObjectCount, 'object')} from storage${freed}.`
    }
@@ -109,7 +108,12 @@ export default function StorageReconciliation() {
    const [result, setResult] = useState(null)
    const [confirming, setConfirming] = useState(null)
    const [pending, startTransition] = useTransition()
-   const { asTime } = useFormatter()
+   const { asBytes, asDecimal, asTime } = useFormatter()
+   const format = {
+      asBytes,
+      plural: (count, singular, suffix) => pluralize(asDecimal, count, singular, suffix),
+   }
+   const { plural } = format
 
    const runScan = () => {
       setError(null)
@@ -175,9 +179,9 @@ export default function StorageReconciliation() {
                </button>
                {report && (
                   <span className="text-sm text-muted-foreground">
-                     {plural(report.storage.objectCount, 'object')} in R2 ({formatBytes(report.storage.totalBytes)})
+                     {plural(report.storage.objectCount, 'object')} in R2 ({asBytes(report.storage.totalBytes)})
                      {' · '}
-                     {plural(report.database.screenshotCount, 'screenshot')} and {plural(report.database.photoCount, 'photo')} in the database ({formatBytes(report.database.totalBytes)})
+                     {plural(report.database.screenshotCount, 'screenshot')} and {plural(report.database.photoCount, 'photo')} in the database ({asBytes(report.database.totalBytes)})
                      {' · '}
                      scanned at {asTime(report.scannedAt)}
                   </span>
@@ -188,7 +192,7 @@ export default function StorageReconciliation() {
 
             {result && (
                <div className="flex flex-col gap-1">
-                  <p className="text-sm text-green-600">{fixMessage(result)}</p>
+                  <p className="text-sm text-green-600">{fixMessage(format, result)}</p>
                   {result.warning && (
                      <p className="text-sm text-destructive">
                         {result.warning} They are orphaned in storage and must be removed manually.
@@ -219,7 +223,7 @@ export default function StorageReconciliation() {
                      title="Orphaned in storage"
                      description="Objects in R2 that no database row points at — paid-for storage nothing can reach."
                      count={report.orphaned.count}
-                     detail={`${plural(report.orphaned.count, 'object')} taking ${formatBytes(report.orphaned.totalBytes)}.`}
+                     detail={`${plural(report.orphaned.count, 'object')} taking ${asBytes(report.orphaned.totalBytes)}.`}
                      samples={report.orphaned.samples}
                      remaining={report.orphaned.count - report.orphaned.samples.length}
                      actionLabel="Delete objects"
@@ -231,7 +235,7 @@ export default function StorageReconciliation() {
                      title="Unreferenced images"
                      description="Rows and their objects that no car links to any more, left behind by earlier deletions."
                      count={report.unreferenced.screenshotCount + report.unreferenced.photoCount}
-                     detail={`${plural(report.unreferenced.screenshotCount, 'screenshot')} and ${plural(report.unreferenced.photoCount, 'photo')} taking ${formatBytes(report.unreferenced.totalBytes)}.`}
+                     detail={`${plural(report.unreferenced.screenshotCount, 'screenshot')} and ${plural(report.unreferenced.photoCount, 'photo')} taking ${asBytes(report.unreferenced.totalBytes)}.`}
                      samples={report.unreferenced.samples}
                      remaining={report.unreferenced.screenshotCount + report.unreferenced.photoCount - report.unreferenced.samples.length}
                      actionLabel="Delete images"
@@ -260,7 +264,7 @@ export default function StorageReconciliation() {
                   <AlertDialogHeader>
                      <AlertDialogTitle>{confirming ? FIXES[confirming].title : ''}</AlertDialogTitle>
                      <AlertDialogDescription>
-                        {confirmDescription(confirming, report)}
+                        {confirmDescription(format, confirming, report)}
                      </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

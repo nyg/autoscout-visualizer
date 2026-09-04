@@ -128,13 +128,14 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 ## Locale formatting (`format.js` + `formatter-context.js`)
 - The root layout reads the `Accept-Language` HTTP header via `parseAcceptLanguage()` and wraps the app in `<FormatterProvider locale={…}>`.
 - `FormatterProvider` (client component) calls `createFormatters(locale)` once and exposes the result via React Context.
-- All client components — tables and charts alike — call `useFormatter()` to get `{ asDecimal, asShortDate, asMediumDate, asShortMonthYearDate, asShortDayMonthDate, asTime }`. No locale prop-drilling, no module-level formatter singletons.
+- All client components — tables and charts alike — call `useFormatter()` to get `{ asDecimal, asBytes, asShortDate, asMediumDate, asShortMonthYearDate, asShortDayMonthDate, asTime }`. No locale prop-drilling, no module-level formatter singletons.
+- Counts and byte sizes go through `asDecimal` / `asBytes` rather than being interpolated raw, so digit grouping and the decimal separator follow the viewer's locale (`3,240` in en-US, `3’240` in de-CH, `3 240` and `1,2 GB` in fr-FR). `asBytes` also keeps the unit selection in one place; a helper that formats bytes without the locale formatter is a regression, which is why there is no standalone `formatBytes` export.
 - `asShortDayMonthDate` formats a timestamp as short month + day (no year), e.g. "Jun 27" — used in date-axis charts.
 - Because the same locale is used for SSR and client rendering, there are no hydration mismatches.
 
 ## Project-specific conventions
 - Frontend formatting is intentionally non-default: 3-space indentation, single quotes, no semicolons (`frontend/eslint.config.mjs`). Match existing style exactly.
-- Byte sizes are **decimal**: `formatBytes` in `lib/format.js` divides by 1000 and labels B/KB/MB/GB/TB. Cloudflare reserves MiB/GiB for R2 limits and bills storage in decimal GB-month, and the dashboard's bucket size is decimal too, so a binary divisor under a `GB` label would both mislabel the number and disagree with the figure the user is comparing it against (~7% low at GB scale). Never reintroduce a 1024 divisor without switching the labels to KiB/MiB/GiB.
+- Byte sizes are **decimal**: `asBytes` from `useFormatter()` divides by 1000 and labels B/KB/MB/GB/TB. Cloudflare reserves MiB/GiB for R2 limits and bills storage in decimal GB-month, and the dashboard's bucket size is decimal too, so a binary divisor under a `GB` label would both mislabel the number and disagree with the figure the user is comparing it against (~7% low at GB scale). Never reintroduce a 1024 divisor without switching the labels to KiB/MiB/GiB.
 - Frontend imports use the `@/` alias (`frontend/jsconfig.json`, `components.json`).
 - Python code follows straightforward Scrapy/PEP 8 style; keep changes small and local to the scraper pipeline.
 
