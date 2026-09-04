@@ -3,7 +3,11 @@
 import { revalidatePath } from 'next/cache'
 import postgres from 'postgres'
 
-import { deleteR2Objects } from '@/lib/r2'
+import { fetchStoredImages } from '@/lib/data'
+import { deleteR2Objects, listR2Objects } from '@/lib/r2'
+import {
+   classifyImageStorage, RECONCILE_GRACE_HOURS, RECONCILE_PREFIXES, summarizeReconciliation
+} from '@/lib/reconcile'
 
 const pgSql = postgres(process.env.PGSQL_URL, { prepare: false })
 
@@ -329,5 +333,160 @@ export async function deleteOldScreenshots(prevState, formData) {
       }
    } catch {
       return { error: 'Failed to delete old screenshots.' }
+   }
+}
+
+
+const ID_BATCH_SIZE = 1000
+
+function batched(ids) {
+   const batches = []
+   for (let i = 0; i < ids.length; i += ID_BATCH_SIZE) {
+      batches.push(ids.slice(i, i + ID_BATCH_SIZE))
+   }
+   return batches
+}
+
+async function reconcileImageStorage() {
+   const rows = await fetchStoredImages(RECONCILE_GRACE_HOURS)
+   const listing = await listR2Objects(RECONCILE_PREFIXES)
+   if (!listing.ok) {
+      return { error: `Could not list R2 storage: ${listing.reason}` }
+   }
+
+   const rowCount = rows.screenshots.length + rows.photos.length
+   if (listing.objects.length === 0 && rowCount > 0) {
+      return {
+         error: `R2 returned no objects at all while the database still references ${rowCount} image${rowCount !== 1 ? 's' : ''}. A wrong bucket name, endpoint or key pair looks exactly like this, so nothing is reported rather than offering to delete every row.`,
+      }
+   }
+
+   return classifyImageStorage(rows, listing.objects)
+}
+
+export async function scanImageStorage() {
+   try {
+      const detail = await reconcileImageStorage()
+      if (detail.error) {
+         return { error: detail.error }
+      }
+      return { report: summarizeReconciliation(detail) }
+   } catch (e) {
+      console.error('Failed to scan image storage:', e.message)
+      return { error: 'Failed to scan image storage.' }
+   }
+}
+
+export async function deleteDanglingImageRows() {
+   try {
+      const detail = await reconcileImageStorage()
+      if (detail.error) {
+         return { error: detail.error }
+      }
+
+      const screenshotIds = detail.dangling.screenshots.map(row => row.id)
+      const photoIds = detail.dangling.photos.map(row => row.id)
+
+      await pgSql.begin(async pgSql => {
+         for (const ids of batched(screenshotIds)) {
+            await pgSql`update cars set screenshot_id = null where screenshot_id in ${pgSql(ids)}`
+            await pgSql`delete from screenshots where id in ${pgSql(ids)}`
+         }
+         for (const ids of batched(photoIds)) {
+            await pgSql`delete from car_photos where photo_id in ${pgSql(ids)}`
+            await pgSql`delete from photos where id in ${pgSql(ids)}`
+         }
+      })
+
+      revalidatePath('/', 'layout')
+      return {
+         success: true,
+         removedScreenshotCount: screenshotIds.length,
+         removedPhotoCount: photoIds.length,
+      }
+   } catch (e) {
+      console.error('Failed to remove dangling image rows:', e.message)
+      return { error: 'Failed to remove dangling image references.' }
+   }
+}
+
+export async function deleteOrphanedR2Objects() {
+   try {
+      const detail = await reconcileImageStorage()
+      if (detail.error) {
+         return { error: detail.error }
+      }
+
+      const keys = detail.orphaned.map(object => object.key)
+      const freedBytes = detail.orphaned.reduce((total, object) => total + object.size, 0)
+      const r2Result = await deleteR2Objects(keys)
+
+      return {
+         success: true,
+         removedObjectCount: r2Result.requestedCount - r2Result.orphanedCount,
+         freedBytes,
+         warning: r2Warning(r2Result),
+      }
+   } catch (e) {
+      console.error('Failed to delete orphaned R2 objects:', e.message)
+      return { error: 'Failed to delete orphaned storage objects.' }
+   }
+}
+
+export async function deleteUnreferencedImages() {
+   try {
+      const detail = await reconcileImageStorage()
+      if (detail.error) {
+         return { error: detail.error }
+      }
+
+      const screenshotIds = detail.unreferenced.screenshots.map(row => row.id)
+      const photoIds = detail.unreferenced.photos.map(row => row.id)
+      const sizeByKey = new Map(
+         [...detail.unreferenced.screenshots, ...detail.unreferenced.photos]
+            .map(row => [row.r2_key, row.size])
+      )
+
+      const removed = await pgSql.begin(async pgSql => {
+         const screenshotKeys = []
+         const photoKeys = []
+         for (const ids of batched(screenshotIds)) {
+            const deleted = await pgSql`
+               delete from screenshots
+                where id in ${pgSql(ids)}
+                  and not exists (
+                     select 1 from cars where cars.screenshot_id = screenshots.id
+                  )
+               returning r2_key`
+            screenshotKeys.push(...deleted.map(row => row.r2_key).filter(Boolean))
+         }
+         for (const ids of batched(photoIds)) {
+            const deleted = await pgSql`
+               delete from photos
+                where id in ${pgSql(ids)}
+                  and not exists (
+                     select 1 from car_photos where car_photos.photo_id = photos.id
+                  )
+               returning r2_key`
+            photoKeys.push(...deleted.map(row => row.r2_key).filter(Boolean))
+         }
+         return { screenshotKeys, photoKeys }
+      })
+
+      const r2Keys = [...removed.screenshotKeys, ...removed.photoKeys]
+      const freedBytes = r2Keys.reduce((total, key) => total + (sizeByKey.get(key) ?? 0), 0)
+      const r2Result = await deleteR2Objects(r2Keys)
+
+      revalidatePath('/', 'layout')
+      return {
+         success: true,
+         removedScreenshotCount: removed.screenshotKeys.length,
+         removedPhotoCount: removed.photoKeys.length,
+         freedBytes,
+         warning: r2Warning(r2Result),
+      }
+   } catch (e) {
+      console.error('Failed to delete unreferenced images:', e.message)
+      return { error: 'Failed to delete unreferenced images.' }
    }
 }

@@ -3,6 +3,7 @@ import { Suspense } from 'react'
 import ClientSettings from '@/components/client-settings'
 import ScreenshotStorage from '@/components/screenshot-storage'
 import SearchManager from '@/components/search-manager'
+import StorageReconciliation from '@/components/storage-reconciliation'
 import {
    fetchConfig, fetchScreenshotStorageByDay,
    fetchScreenshotStorageSummary, fetchSearches
@@ -21,6 +22,7 @@ export default async function SettingsPage() {
          <Suspense fallback={<p className="text-sm text-muted-foreground">Loading screenshot data…</p>}>
             <ScreenshotStorage data={screenshotData} summary={screenshotSummary} />
          </Suspense>
+         <StorageReconciliation />
       </div>
    )
 }

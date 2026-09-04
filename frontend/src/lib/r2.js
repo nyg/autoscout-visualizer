@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
 
 const MAX_CONCURRENT_BATCHES = 4
 
@@ -87,4 +87,39 @@ export async function deleteR2Objects(keys) {
    }
 
    return { requestedCount, orphanedCount, reason }
+}
+
+export async function listR2Objects(prefixes) {
+   const client = getS3Client()
+   const bucket = process.env.R2_BUCKET_NAME
+   if (!client || !bucket) {
+      return { ok: false, reason: 'R2 is not configured', objects: [] }
+   }
+
+   const objects = []
+   try {
+      for (const prefix of prefixes) {
+         let continuationToken = undefined
+         do {
+            const response = await client.send(new ListObjectsV2Command({
+               Bucket: bucket,
+               Prefix: prefix,
+               ContinuationToken: continuationToken,
+            }))
+            for (const object of response.Contents ?? []) {
+               objects.push({
+                  key: object.Key,
+                  size: Number(object.Size ?? 0),
+                  lastModified: object.LastModified ? object.LastModified.getTime() : Date.now(),
+               })
+            }
+            continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined
+         } while (continuationToken)
+      }
+   } catch (err) {
+      console.error('Failed to list R2 objects:', err.message)
+      return { ok: false, reason: err.message, objects: [] }
+   }
+
+   return { ok: true, reason: null, objects }
 }

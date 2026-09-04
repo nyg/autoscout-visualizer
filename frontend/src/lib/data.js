@@ -197,6 +197,22 @@ export async function fetchVehicleScreenshots(vehicleId, searchId) {
        order by sc.created_at asc`
 }
 
+export async function fetchStoredImages(graceHours) {
+   const [screenshots, photos] = await Promise.all([
+      pgSql`
+         select s.id, s.r2_key, coalesce(s.compressed_size, 0) as size,
+                exists (select 1 from cars c where c.screenshot_id = s.id) as referenced,
+                s.created_at < current_timestamp - make_interval(hours => ${graceHours}::int) as past_grace
+           from screenshots s`,
+      pgSql`
+         select p.id, p.r2_key, coalesce(p.compressed_size, 0) as size,
+                exists (select 1 from car_photos cp where cp.photo_id = p.id) as referenced,
+                p.created_at < current_timestamp - make_interval(hours => ${graceHours}::int) as past_grace
+           from photos p`,
+   ])
+   return { screenshots, photos }
+}
+
 export async function fetchScreenshotStorageByDay() {
    return pgSql`
       select date_trunc('day', sc.created_at) as date,

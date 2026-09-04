@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { deleteOldScreenshots } from '@/lib/actions'
+import { formatBytes } from '@/lib/format'
 import { useFormatter } from '@/lib/formatter-context'
 
 
@@ -19,16 +20,6 @@ const RETENTION_OPTIONS = [
    { days: 90, label: '90 days' },
    { days: 180, label: '180 days' },
 ]
-
-function formatBytes(bytes) {
-   if (bytes === 0) {
-      return '0 B'
-   }
-   const units = ['B', 'KB', 'MB', 'GB']
-   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-   const value = bytes / Math.pow(1024, i)
-   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`
-}
 
 function formatMB(bytes) {
    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
