@@ -223,6 +223,24 @@ export async function fetchScreenshotStorageByDay() {
        order by date`
 }
 
+export async function fetchPhotoStorageByDay() {
+   return pgSql`
+      select date_trunc('day', p.created_at) as date,
+             count(*)::int as count,
+             sum(p.compressed_size)::bigint as total_size
+        from photos p
+       group by date
+       order by date`
+}
+
+export async function fetchPhotoStorageSummary() {
+   const [row] = await pgSql`
+      select count(*)::int as total_count,
+             coalesce(sum(compressed_size), 0)::bigint as total_size
+        from photos`
+   return row
+}
+
 export async function fetchPriceChangedListings(searchName) {
    return pgSql`
       with latest_run as (

@@ -24,7 +24,7 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - Cars table (sorting, column visibility, seller cell): `frontend/src/components/cars.js`
 - Lightbox image viewer: `frontend/src/components/lightbox.js`
 - Google Places integration: `frontend/src/components/place-details.js`
-- Screenshot storage chart + cleanup UI: `frontend/src/components/screenshot-storage.js`
+- Storage usage charts + screenshot cleanup UI: `frontend/src/components/image-storage.js`
 - DB/R2 image reconciliation UI: `frontend/src/components/storage-reconciliation.js`
 - Reconciliation classification (pure): `frontend/src/lib/reconcile.js`
 - Search runs client component: `frontend/src/components/search-runs.js`
@@ -96,7 +96,7 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - The settings page is a server component that fetches searches from the database and renders three sections:
   - **SearchManager** (`search-manager.js`): CRUD for search configurations (name, URL, active toggle, per-search `screenshots_enabled` / `photos_enabled` toggles, copy URL button). Uses Server Actions from `actions.js`.
   - **ClientSettings** (`client-settings.js`): Google Maps API key, home address, and email recipient. Settings are stored in the database `config` table via the `updateConfig` server action.
-  - **ScreenshotStorage** (`screenshot-storage.js`): Bar chart of daily screenshot storage usage and a cleanup form to delete screenshots older than a configurable retention period (30/90/180 days). Uses `deleteOldScreenshots` server action.
+  - **ImageStorage** (`image-storage.js`): Two side-by-side bar charts of daily storage usage — page screenshots and car pictures — plus a cleanup form deleting screenshots older than a free-form number of days (default 30). `deleteOldScreenshots` validates the range 1–3650 server-side; the input's `min`/`max` are a hint, not the check. Car pictures have no retention sweep: a photo is shared across listings through `car_photos`, so age alone does not say whether it is still in use.
   - **StorageReconciliation** (`storage-reconciliation.js`): On-demand comparison of the `screenshots`/`photos` tables against the `screenshots/` and `photos/` prefixes in R2, with a fix button per discrepancy class.
 - Maps API key is consumed by `place-details.js` via `useSyncExternalStore` in `cars.js`.
 - Home address is consumed by the directions link in `SellerCell` via `useSyncExternalStore`.
@@ -128,6 +128,7 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 
 ## Project-specific conventions
 - Frontend formatting is intentionally non-default: 3-space indentation, single quotes, no semicolons (`frontend/eslint.config.mjs`). Match existing style exactly.
+- Byte sizes are **decimal**: `formatBytes` in `lib/format.js` divides by 1000 and labels B/KB/MB/GB/TB. Cloudflare reserves MiB/GiB for R2 limits and bills storage in decimal GB-month, and the dashboard's bucket size is decimal too, so a binary divisor under a `GB` label would both mislabel the number and disagree with the figure the user is comparing it against (~7% low at GB scale). Never reintroduce a 1024 divisor without switching the labels to KiB/MiB/GiB.
 - Frontend imports use the `@/` alias (`frontend/jsconfig.json`, `components.json`).
 - Python code follows straightforward Scrapy/PEP 8 style; keep changes small and local to the scraper pipeline.
 

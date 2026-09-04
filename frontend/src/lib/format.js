@@ -46,12 +46,16 @@ export function parseAcceptLanguage(header) {
 }
 
 
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
+
 export function formatBytes(bytes) {
-   if (bytes === 0) {
+   if (!bytes) {
       return '0 B'
    }
-   const units = ['B', 'KB', 'MB', 'GB']
-   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-   const value = bytes / Math.pow(1024, i)
-   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`
+   let i = Math.min(Math.floor(Math.log10(bytes) / 3), BYTE_UNITS.length - 1)
+   if (bytes / Math.pow(1000, i) >= 999.5 && i < BYTE_UNITS.length - 1) {
+      i++
+   }
+   const value = bytes / Math.pow(1000, i)
+   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${BYTE_UNITS[i]}`
 }
