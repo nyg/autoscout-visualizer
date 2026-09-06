@@ -8,7 +8,6 @@
 - [Installation](#installation)
 - [Usage](#usage)
 - [Headless Linux tips](#headless-linux-tips)
-- [Migration](#migration)
 - [Project Structure](#project-structure)
 
 ## Features
@@ -17,7 +16,10 @@
 - Extracts vehicle details (price, mileage, specs) and seller information
 - Failed requests are automatically retried up to 3 times (`RETRY_TIMES`) by Scrapy's built-in `RetryMiddleware`
 - Stores data in PostgreSQL with batch tracking for historical analysis
+- Archives every seller-uploaded listing photo and a full-page screenshot of each listing in Cloudflare R2, as deduplicated WebP
+- Records each run in `search_runs` with its stats and a pass/fail verdict; `run-spiders.sh` exits non-zero when any search fails, so a cron job reports the failure
 - Search configurations stored in database, manageable from the frontend Settings page
+- Screenshot and photo capture can be turned off per search from the same page
 - Sends a batch summary email after all spiders finish (requires [Resend](https://resend.com) API key)
 
 ## Installation
@@ -41,12 +43,20 @@ createdb autoscout24_trends
 psql -d autoscout24_trends -f SCHEMA.sql
 ```
 
-Create a `.env` file in the crawler directory:
+Create a `.env` file in the crawler directory (see `.env.example`):
 
 ```env
 PGSQL_URL=postgresql://username:password@localhost:5432/autoscout24_trends
 RESEND_API_KEY=re_YourApiKeyFromResendCom
+
+R2_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=…
+R2_SECRET_ACCESS_KEY=…
+R2_BUCKET_NAME=autoscout24-trends
+R2_PUBLIC_URL=https://…
 ```
+
+Only `PGSQL_URL` is required. Without the R2 variables the screenshot and photo pipelines log a warning and skip, and the crawl still stores listings; without `RESEND_API_KEY` no summary email is sent.
 
 The email recipient is configured in the frontend Settings page (`/settings`).
 
@@ -56,9 +66,10 @@ The email recipient is configured in the frontend Settings page (`/settings`).
 
 Searches are stored in the `searches` database table and managed from the frontend Settings page (`/settings`). Each search has:
 
-- **name**: display label used in filenames and the UI
+- **name**: display label used in the UI; also what car rows are joined by, so renaming a search carries its history with it
 - **url**: AutoScout24 search URL with filters
 - **is_active**: whether the search is included in batch runs
+- **screenshots_enabled** / **photos_enabled**: whether `ScreenshotPipeline` and `PhotoPipeline` run for this search
 
 You can also insert searches directly via SQL:
 
@@ -92,7 +103,7 @@ crontab -e
 0 0 * * * /path/to/crawler/run-spiders.sh
 ```
 
-Logs are automatically written to `$XDG_STATE_HOME/autoscout24-trends/` (defaults to `~/.local/state/autoscout24-trends/`) with daily rotation and 30-day retention. Shell-level output redirection (`>> ... 2>&1`) is no longer needed.
+Logs are written to `$XDG_STATE_HOME/autoscout24-trends/` (defaults to `~/.local/state/autoscout24-trends/`) with daily rotation and 30-day retention, so the cron entry needs no shell-level output redirection.
 
 You can override the log directory by setting the `XDG_STATE_HOME` environment variable.
 
@@ -103,38 +114,23 @@ When running the crawler headless with Xvfb on a Linux server, you may want to r
 - **Recording an Xvfb session** with `ffmpeg`
 - **Connecting via VNC** to a live Xvfb session with `x11vnc`
 
-## Migration
-
-If upgrading from the file-based search configuration (`.env` files in `searches/`), run the migration script:
-
-```bash
-psql -d autoscout24_trends -f migrations/001_add_searches_table.sql
-```
-
-This will:
-1. Create the `searches` table
-2. Populate it from existing `cars.search_name` values (with placeholder URLs — update them afterwards)
-3. Replace `cars.search_name` with `cars.search_id` (FK to `searches`)
-
-After migrating, update the `url` for each search in the Settings page or via SQL.
-
 ## Project Structure
 
 ```
 crawler/
-├── autoscout/           # Scrapy project package
+├── autoscout/                # Scrapy project package
 │   ├── spiders/
-│   │   └── search.py    # Main spider
-│   ├── items.py         # Scrapy item definitions
-│   ├── pipelines.py     # PostgreSQL pipeline
-│   ├── email.py         # Batch summary email
-│   ├── extensions.py    # Search run tracking extension
-│   └── settings.py      # Scrapy settings
-├── migrations/          # Database migration scripts
-├── output/              # Screenshots (runtime output)
-├── SCHEMA.sql           # PostgreSQL schema
-├── run-spiders.sh       # Shell wrapper: updates deps, runs run-spiders.py
-├── run-spiders.py       # Runs all spiders in-process via CrawlerRunner
-├── pyproject.toml       # Python dependencies
-└── uv.lock              # Locked dependency versions
+│   │   └── search.py         # Main spider
+│   ├── items.py              # Scrapy item definitions
+│   ├── pipelines.py          # Item stats, screenshot, photo and PostgreSQL pipelines
+│   ├── email.py              # Batch summary email
+│   ├── extensions.py         # Search run tracking extension
+│   ├── flight_data_patch.py  # njsparser workaround for valueless RSC rows
+│   └── settings.py           # Scrapy settings
+├── SCHEMA.sql                # PostgreSQL schema
+├── run-spiders.sh            # Shell wrapper: updates deps, runs run-spiders.py
+├── run-spiders.py            # Runs all spiders in-process via CrawlerRunner
+├── scrapy.cfg                # Scrapy project config
+├── pyproject.toml            # Python dependencies
+└── uv.lock                   # Locked dependency versions
 ```
