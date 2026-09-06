@@ -8,7 +8,6 @@
 - [Installation](#installation)
 - [Usage](#usage)
 - [Headless Linux tips](#headless-linux-tips)
-- [Project Structure](#project-structure)
 
 ## Features
 
@@ -113,24 +112,3 @@ When running the crawler headless with Xvfb on a Linux server, you may want to r
 
 - **Recording an Xvfb session** with `ffmpeg`
 - **Connecting via VNC** to a live Xvfb session with `x11vnc`
-
-## Project Structure
-
-```
-crawler/
-├── autoscout/                # Scrapy project package
-│   ├── spiders/
-│   │   └── search.py         # Main spider
-│   ├── items.py              # Scrapy item definitions
-│   ├── pipelines.py          # Item stats, screenshot, photo and PostgreSQL pipelines
-│   ├── email.py              # Batch summary email
-│   ├── extensions.py         # Search run tracking extension
-│   ├── flight_data_patch.py  # njsparser workaround for valueless RSC rows
-│   └── settings.py           # Scrapy settings
-├── SCHEMA.sql                # PostgreSQL schema
-├── run-spiders.sh            # Shell wrapper: updates deps, runs run-spiders.py
-├── run-spiders.py            # Runs all spiders in-process via CrawlerRunner
-├── scrapy.cfg                # Scrapy project config
-├── pyproject.toml            # Python dependencies
-└── uv.lock                   # Locked dependency versions
-```

@@ -8,7 +8,6 @@ Next.js application that visualizes car listing data scraped by the crawler.
 - [Installation](#installation)
 - [Usage](#usage)
 - [Updating shadcn/ui Components](#updating-shadcnui-components)
-- [Project Structure](#project-structure)
 - [Locale Formatting](#locale-formatting)
 
 ## Features
@@ -86,50 +85,6 @@ Notes for this repo:
 - Keep generated UI code aligned with the existing style rules: 3-space indentation, single quotes, and no semicolons.
 - Prefer the existing local primitives in `src/components/ui/` over introducing another component system.
 - `components.json` still uses `"iconLibrary": "lucide"`, so adding or refreshing components that depend on icons may re-introduce `lucide-react`.
-
-## Project Structure
-
-```
-frontend/
-├── src/
-│   ├── app/                              # Next.js App Router
-│   │   ├── layout.js                     # Root layout, locale detection
-│   │   ├── page.js                       # Home page
-│   │   ├── globals.css                   # Tailwind CSS v4 config
-│   │   ├── search/[searchName]/page.js   # Search detail page (active / previous / history tabs)
-│   │   ├── search-runs/page.js           # Paginated crawl run history
-│   │   ├── settings/page.js              # Searches, config, storage, reconciliation
-│   │   └── api/                          # Screenshot and photo URL routes
-│   ├── components/
-│   │   ├── navbar.js                     # Navigation bar
-│   │   ├── search-dropdown.js            # Search selector
-│   │   ├── search-tabs.js                # Per-search tab navigation
-│   │   ├── cars.js                       # Car listings table
-│   │   ├── price-history.js              # Price-changed listings table
-│   │   ├── lightbox.js                   # Full-screen image viewer
-│   │   ├── place-details.js              # Google Places seller lookup
-│   │   ├── daily-listing-count.js        # Listing count / price / mileage chart
-│   │   ├── mileage-price-comparison.js   # Mileage vs price scatter chart
-│   │   ├── chart-utils.jsx               # Shared Recharts helpers
-│   │   ├── search-manager.js             # Search CRUD UI
-│   │   ├── client-settings.js            # Maps key, home address, email recipient
-│   │   ├── image-storage.js              # Storage charts and cleanup UI
-│   │   ├── storage-reconciliation.js     # DB/R2 reconciliation UI
-│   │   ├── search-runs.js                # Search runs table and controls
-│   │   └── ui/                           # shadcn-generated primitives
-│   └── lib/
-│       ├── data.js                       # Database reads
-│       ├── actions.js                    # Server Actions (database writes)
-│       ├── r2.js                         # Cloudflare R2 client (server-only)
-│       ├── reconcile.js                  # Pure DB/R2 classification logic
-│       ├── format.js                     # Formatter factory & locale parser
-│       ├── formatter-context.js          # React Context provider & hook
-│       └── utils.js                      # Class name helper
-├── components.json                       # shadcn CLI config
-├── eslint.config.mjs                     # Lint and style rules
-├── postcss.config.mjs                    # PostCSS / Tailwind plugin
-└── package.json                          # Dependencies and scripts
-```
 
 ## Locale Formatting
 
