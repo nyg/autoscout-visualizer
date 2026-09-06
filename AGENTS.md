@@ -1,11 +1,10 @@
 # AGENTS.md
 
-This is the canonical repo guide for humans and coding agents. Keep repository-specific architecture, workflows, conventions, and integration pitfalls here, and keep `.github/copilot-instructions.md` short and Copilot-specific.
+This is the canonical repo guide for humans and coding agents. Keep repository-specific architecture, workflows, conventions, and integration pitfalls here. `CLAUDE.md` is a one-line pointer at this file (`@AGENTS.md`); do not duplicate repo facts there or in any other agent instruction file.
 
 ## Repo map
 - This repo has two coupled parts: `crawler/` scrapes AutoScout24 into PostgreSQL, and `frontend/` reads the same DB directly to render charts/tables.
 - The main cross-component contract is the PostgreSQL schema in `crawler/SCHEMA.sql` plus the `searches`, `search_runs` tables and `search_id`/`search_run_id` semantics used by both `crawler/autoscout/pipelines.py` and `frontend/src/lib/data.js`.
-- Generated artifacts live in `crawler/output/` (screenshots). Treat that directory as runtime output, not source.
 
 ## Fast paths
 - Crawler entrypoint: `crawler/autoscout/spiders/search.py`
@@ -15,13 +14,15 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - Frontend DB queries: `frontend/src/lib/data.js`
 - Frontend Server Actions (search CRUD, run/screenshot deletion): `frontend/src/lib/actions.js`
 - Frontend R2 client (object deletion): `frontend/src/lib/r2.js`
-- Main UI route: `frontend/src/app/search/[searchName]/page.js`
+- Main UI route: `frontend/src/app/search/[searchName]/page.js` (tabs: active / previous / price history)
 - Settings page: `frontend/src/app/settings/page.js`
 - Search management UI: `frontend/src/components/search-manager.js`
 - Client-side settings (localStorage): `frontend/src/components/client-settings.js`
-- Search tab navigation (active / previous): `frontend/src/components/search-tabs.js`
+- Search tab navigation (active / previous / price history): `frontend/src/components/search-tabs.js`
 - Search selector dropdown (navbar): `frontend/src/components/search-dropdown.js`
 - Cars table (sorting, column visibility, seller cell): `frontend/src/components/cars.js`
+- Price history table (price-changed listings): `frontend/src/components/price-history.js`
+- Shared Recharts helpers: `frontend/src/components/chart-utils.jsx`
 - Lightbox image viewer: `frontend/src/components/lightbox.js`
 - Google Places integration: `frontend/src/components/place-details.js`
 - Storage usage charts + screenshot cleanup UI: `frontend/src/components/image-storage.js`
@@ -30,6 +31,10 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - Search runs client component: `frontend/src/components/search-runs.js`
 - Number/date formatting: `frontend/src/lib/format.js`
 - Formatter React Context: `frontend/src/lib/formatter-context.js`
+
+## Branching workflow
+- Never commit directly to `master`. Always open a pull request against `master`.
+- If the current branch is not `master`, do work on that branch. If it is `master`, create a feature branch before making any changes.
 
 ## Developer workflows
 - Frontend commands are the standard ones from `frontend/package.json`: `pnpm dev`, `pnpm build`, `pnpm lint`.
@@ -43,6 +48,7 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - `crawler/autoscout/flight_data_patch.py` makes njsparser decode flight data rows with an empty value to `None` instead of raising, and `search.py` applies it at import. AutoScout24 streams part of its RSC payload, which emits valueless React rows such as `a:X` (start async iterable) and `a:C` (stop stream); njsparser 2.16 passes their empty payload to `orjson.loads`, which raises `JSONDecodeError: Input is a zero-length, empty document` and aborts the entire page parse. Drop the patch once njsparser handles those row classes itself — they are listed as unimplemented in its own TODO in `njsparser/parser/flight_data.py`, and 2.16 is still the latest release as of August 2026.
 - The spider yields `SellerItem` before `CarItem`; the pipeline processes them in that order.
 - `PostgreSQLPipeline` buffers sellers and cars separately, inserts sellers with `ON CONFLICT DO NOTHING`, then inserts cars with a shared `search_run_id` created by `SearchRunExtension`.
+- `ItemTypeStatsPipeline` (priority 200) only counts items by class into `item_scraped_count/{CarItem,SellerItem}` so the per-type totals reach `search_runs.stats`. It must stay first in the pipeline order — a later pipeline that drops an item would make the counts disagree with what the spider actually yielded.
 - `SearchRunExtension` (EXTENSIONS priority 500) creates a `search_runs` row on `spider_opened` and updates it with final stats on `spider_closed`. It publishes `search_run_id` to Scrapy stats so `PostgreSQLPipeline` can read it.
 - Failed requests are retried up to `RETRY_TIMES` (3) by Scrapy's built-in `RetryMiddleware`. The middleware intercepts retryable HTTP status codes and connection errors before they reach the spider. Only permanently failed requests (all retries exhausted) reach the spider's `handle_error` errback and are recorded in `self.failed_requests`.
 - Parsing failures are recorded in `self.failed_requests` too: `parse()` records the search page URL and re-raises (so Scrapy also counts it in `spider_exceptions`), while `parse_car()` records the car URL and continues with the remaining cars. A page that downloads fine but cannot be parsed must never be silently dropped.
@@ -67,12 +73,13 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - The frontend uses App Router server components for data fetching and passes unresolved promises into client components, which call `use(data)` (`cars.js`, `daily-listing-count.js`, `mileage-price-comparison.js`). Preserve that pattern when adding new visualizations.
 - `frontend/src/lib/data.js` owns all SQL reads. `frontend/src/lib/actions.js` owns all SQL writes (Server Actions for search CRUD, run/screenshot deletion). Prefer extending queries in these files instead of embedding SQL in pages/components.
 - Route params are URL-encoded search names. `navbar.js` uses `SearchDropdown` (which calls `fetchSearchNames()`) and `search/[searchName]/page.js` decodes the param before querying.
-- The search page uses a `?tab=active|previous` URL param to switch between active and previous listings; `SearchTabs` renders the tab nav and the page conditionally fetches data for the active tab only.
+- The search page uses a `?tab=active|previous|history` URL param; `SearchTabs` renders the tab nav and the page fetches data for the selected tab only. An unknown value falls back to `active`. Charts are rendered on the `active` tab only.
 - "Active listings" means rows from the latest `search_run_id` for a given search; "Previous listings" means the most recent older row per `vehicle_id` that is absent from the latest run.
 - All car queries join through the `searches` table via `cars.search_id` and filter by `searches.name`.
 - The daily chart aggregates by `date_in`, not by listing creation time.
 - Styling uses Tailwind utility classes with local UI primitives under `frontend/src/components/ui/`; avoid introducing a second styling system.
-- UI primitives (`button`, `card`, `chart`, `dropdown-menu`, `popover`, `table`, `tooltip`) wrap `@base-ui/react` and shadcn-generated foundations.
+- UI primitives (`alert-dialog`, `button`, `card`, `chart`, `dropdown-menu`, `popover`, `table`, `tooltip`) wrap `@base-ui/react` and shadcn-generated foundations.
+- `HiddenEdgeYAxisTick` in `chart-utils.jsx` is the shared Recharts tick renderer for both charts' Y axes. It returns `null` for `index === 0` so the bottom-most label cannot collide with the X axis; a chart that renders its own tick component will reintroduce that overlap.
 
 ## Cars table (`cars.js`)
 - Column definitions live in the `COLUMNS` array at the top of the file. Add new columns there (key, label, sortType, sortKey, align, defaultVisible).
@@ -81,6 +88,12 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - Screenshot/photo viewing: clicking the camera icon opens a `Lightbox` component (fullscreen overlay with left/right navigation, keyboard support, Escape to close). The lightbox is rendered via `createPortal` at the document root. Click the image to toggle between fit-by-height and fit-by-width modes; the container scrolls when the image exceeds the viewport. When opened, the lightbox lazy-loads additional listing photos via `fetchMoreUrl`.
 - Seller cell: shows seller name (truncated), location, and three icons — Google Maps link (MapPinIcon), directions from home (NavigationIcon, requires home address in Settings), and place details popover (MapIcon, requires Google Maps API key, disabled for private sellers).
 - Text truncation: title (70 chars), description (70 chars, scrollable tooltip), seller name (30 chars). All use `TruncatedText` component with `Tooltip`. `TruncatedText` accepts an optional `href` prop to render the text as a link (used for car title).
+
+## Price history tab (`price-history.js`)
+- `fetchPriceChangedListings` returns one row per vehicle whose price ever changed across runs, carrying the full `price_history` JSON array (`{price, date}` per change, ascending) plus `first_price`, `last_change_date` and an `is_active` flag for membership in the latest run.
+- The query keeps only rows where the price *differs from the previous run* (`lag(price) over (partition by vehicle_id order by search_run_id)`), so the history array is a list of changes, not one entry per crawl.
+- `change_abs` / `change_pct` are derived client-side from `price` and `first_price`, so they measure the whole life of the listing rather than the last step.
+- The table has its own `COLUMNS` array and sort state, separate from `cars.js`: no column-visibility menu, no localStorage, default sort is `last_change` descending. Falling prices render green and rising prices red — the opposite of a stock ticker, because this is a buyer's view.
 
 ## Search runs page (`/search-runs`)
 - Server-side paginated with URL query params: `page`, `search`, `pageSize`, `from`, `to`.
@@ -143,10 +156,9 @@ This is the canonical repo guide for humans and coding agents. Keep repository-s
 - `frontend/src/lib/data.js` connects with `postgres(process.env.PGSQL_URL)`, so frontend pages require the same DB env var as the crawler.
 - Search names are user-facing labels stored in DB; do not replace them with slugified values in queries or routes.
 - When changing seller/car relationships, remember the frontend assumes seller data is joinable by `seller_id`.
-- Do not "clean up" `crawler/output/` unless the task is explicitly about runtime data/configuration.
 - localStorage keys used by the frontend: `'car-table-visible-columns'`, `'google-maps-api-key'`, `'home-address'`, `'search-runs-preferences'`. Avoid collisions.
 - Seller types are only `'professional'` and `'private'`. Maps place details are only shown for professional sellers. Address building differs by type: private → "address, zip_code city", professional → "name, address, zip_code city".
-- Screenshots are stored in Cloudflare R2 (not in the DB). The `screenshots` table holds only metadata and the R2 public URL. Car queries LEFT JOIN `screenshots` via `cars.screenshot_id` to get `screenshot_url`. The `/api/screenshot/[carId]` route redirects to the R2 URL. Backfill existing bytea data with `crawler/backfill_screenshots.py`.
+- Screenshots are stored in Cloudflare R2 (not in the DB). The `screenshots` table holds only metadata and the R2 public URL. Car queries LEFT JOIN `screenshots` via `cars.screenshot_id` to get `screenshot_url`. The `/api/screenshot/[carId]` route redirects to the R2 URL.
 - Listing photos are stored in R2 via the `photos` table (metadata) and `car_photos` junction table (car_id, photo_id, position). The `/api/photos/[carId]` route returns a JSON array of photo URLs. Car listing queries include a `photo_count` subquery. The lightbox component lazy-loads photos via `fetchMoreUrl` when opened.
 - `photo_sources` (image_key → photo_id) is the crawler's pre-download cache and cascades on `photos` delete. Deleting a `photos` row therefore drops its key mappings, which is exactly what makes the next crawl re-download and re-store that image. Nothing in the frontend needs to touch `photo_sources` — but the cascade is why the orphan cleanup in `deleteSearch` still works, so do not weaken that FK.
 - The `/api/car-screenshots/[vehicleId]` route accepts a `searchId` query param and returns a chronological list of screenshot URLs for a given vehicle — used by the lightbox to display screenshot history.
